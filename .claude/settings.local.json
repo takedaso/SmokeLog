@@ -1,0 +1,20 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npx create-next-app@latest . --typescript --tailwind --eslint --app --no-src-dir --import-alias \"@/*\" --yes)",
+      "Bash(npm --version)",
+      "Read(//usr/**)",
+      "Read(//opt/**)",
+      "Read(//Users/takedashuuji/SmokeApp/**)",
+      "Bash(curl -fsSL https://fnm.vercel.app/install)",
+      "Bash(bash)",
+      "Bash(export NVM_DIR=\"$HOME/.nvm\")",
+      "Bash(. \"$NVM_DIR/nvm.sh\")",
+      "Bash(nvm install:*)",
+      "Bash(npm install:*)",
+      "mcp__Claude_Preview__preview_start",
+      "Bash(chmod +x /Users/takedashuuji/SmokeApp/start-dev.sh)",
+      "Bash(pkill -f \"next dev\")"
+    ]
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "SmokeApp",
+      "runtimeExecutable": "/bin/bash",
+      "runtimeArgs": ["/Users/takedashuuji/SmokeApp/start-dev.sh"],
+      "port": 3000
+    }
+  ]
+}
