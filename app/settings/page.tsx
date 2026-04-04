@@ -1,36 +1,48 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { getSettings, saveSettings, getCravings, exportToCSV } from '@/lib/storage'
+import { getSettings, saveSettings, getCravings } from '@/lib/db'
+import { exportToCSV } from '@/lib/storage'
 import { AppSettings } from '@/lib/types'
+import { createClient } from '@/lib/supabase/client'
+import { useRouter } from 'next/navigation'
 
 export default function SettingsPage() {
+  const router = useRouter()
   const [settings, setSettings] = useState<AppSettings>({ phase: 'preparation' })
   const [quitDateInput, setQuitDateInput] = useState('')
   const [saved, setSaved] = useState(false)
   const [confirmReset, setConfirmReset] = useState(false)
+  const [totalCravings, setTotalCravings] = useState(0)
+  const [userEmail, setUserEmail] = useState('')
 
   useEffect(() => {
-    const s = getSettings()
-    setSettings(s)
-    if (s.quitDate) {
-      setQuitDateInput(s.quitDate.slice(0, 10))
+    const load = async () => {
+      const supabase = createClient()
+      const { data: { user } } = await supabase.auth.getUser()
+      setUserEmail(user?.email ?? '')
+
+      const [s, c] = await Promise.all([getSettings(), getCravings()])
+      setSettings(s)
+      setTotalCravings(c.length)
+      if (s.quitDate) setQuitDateInput(s.quitDate.slice(0, 10))
     }
+    load()
   }, [])
 
-  const handleSave = () => {
+  const handleSave = async () => {
     const updated: AppSettings = {
       phase: quitDateInput ? 'quitting' : 'preparation',
       quitDate: quitDateInput ? new Date(quitDateInput).toISOString() : undefined,
     }
-    saveSettings(updated)
+    await saveSettings(updated)
     setSettings(updated)
     setSaved(true)
     setTimeout(() => setSaved(false), 2000)
   }
 
-  const handleExportCSV = () => {
-    const cravings = getCravings()
+  const handleExportCSV = async () => {
+    const cravings = await getCravings()
     const csv = exportToCSV(cravings)
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' })
     const url = URL.createObjectURL(blob)
@@ -41,20 +53,31 @@ export default function SettingsPage() {
     URL.revokeObjectURL(url)
   }
 
-  const handleResetData = () => {
+  const handleLogout = async () => {
+    const supabase = createClient()
+    await supabase.auth.signOut()
+    router.push('/auth/login')
+    router.refresh()
+  }
+
+  const handleResetData = async () => {
     if (!confirmReset) {
       setConfirmReset(true)
       return
     }
-    localStorage.removeItem('smoke_app_cravings')
-    localStorage.removeItem('smoke_app_settings')
+    const supabase = createClient()
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) return
+
+    await supabase.from('cravings').delete().eq('user_id', user.id)
+    await supabase.from('user_settings').delete().eq('user_id', user.id)
+
     setSettings({ phase: 'preparation' })
     setQuitDateInput('')
+    setTotalCravings(0)
     setConfirmReset(false)
     alert('データをリセットしました')
   }
-
-  const totalCravings = typeof window !== 'undefined' ? getCravings().length : 0
 
   return (
     <div className="min-h-full">
@@ -63,6 +86,29 @@ export default function SettingsPage() {
       </div>
 
       <div className="px-5 py-6 space-y-5">
+        {/* アカウント */}
+        <div className="bg-white rounded-2xl shadow-sm p-5">
+          <p className="font-semibold text-gray-700 mb-3">アカウント</p>
+          <div className="flex items-center gap-3 p-3 bg-gray-50 rounded-xl mb-4">
+            <div className="w-9 h-9 rounded-full bg-purple-100 flex items-center justify-center text-purple-600 font-bold text-sm">
+              {userEmail.slice(0, 1).toUpperCase()}
+            </div>
+            <div>
+              <p className="text-sm font-medium text-gray-700">{userEmail}</p>
+              <p className="text-xs text-gray-400">ログイン中</p>
+            </div>
+          </div>
+          <button
+            onClick={handleLogout}
+            className="w-full flex items-center justify-center gap-2 border border-gray-200 text-gray-600 font-medium py-3 rounded-xl text-sm transition-all hover:bg-gray-50 active:scale-95"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+            </svg>
+            ログアウト
+          </button>
+        </div>
+
         {/* 現在のフェーズ */}
         <div className="bg-white rounded-2xl shadow-sm p-5">
           <p className="font-semibold text-gray-700 mb-3">現在のフェーズ</p>
@@ -81,13 +127,12 @@ export default function SettingsPage() {
           </div>
         </div>
 
-        {/* 禁煙開始日の設定 */}
+        {/* 禁煙開始日 */}
         <div className="bg-white rounded-2xl shadow-sm p-5 space-y-4">
           <div>
             <p className="font-semibold text-gray-700 mb-1">禁煙開始日</p>
             <p className="text-xs text-gray-400">日付を設定すると「禁煙中」フェーズに切り替わります</p>
           </div>
-
           <input
             type="date"
             value={quitDateInput}
@@ -95,7 +140,6 @@ export default function SettingsPage() {
             max={new Date().toISOString().slice(0, 10)}
             className="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-purple-300 focus:border-transparent"
           />
-
           {quitDateInput && (
             <div className="bg-green-50 rounded-xl p-3">
               <p className="text-green-700 text-xs">
@@ -103,33 +147,20 @@ export default function SettingsPage() {
               </p>
             </div>
           )}
-
-          {!quitDateInput && settings.quitDate && (
-            <button
-              onClick={() => setQuitDateInput('')}
-              className="text-xs text-red-400 underline"
-            >
-              禁煙開始日をクリア（準備期に戻る）
-            </button>
-          )}
-
           <button
             onClick={handleSave}
             className={`w-full font-bold py-4 rounded-xl text-base transition-all active:scale-95 ${
-              saved
-                ? 'bg-green-500 text-white'
-                : 'bg-purple-600 hover:bg-purple-700 text-white shadow-md shadow-purple-100'
+              saved ? 'bg-green-500 text-white' : 'bg-purple-600 hover:bg-purple-700 text-white shadow-md shadow-purple-100'
             }`}
           >
             {saved ? '保存しました ✓' : '設定を保存'}
           </button>
         </div>
 
-        {/* データ */}
+        {/* データ管理 */}
         <div className="bg-white rounded-2xl shadow-sm p-5 space-y-3">
           <p className="font-semibold text-gray-700">データ管理</p>
           <p className="text-xs text-gray-400">総記録数: <span className="font-semibold text-gray-600">{totalCravings}件</span></p>
-
           <button
             onClick={handleExportCSV}
             disabled={totalCravings === 0}
@@ -140,13 +171,10 @@ export default function SettingsPage() {
             </svg>
             CSVエクスポート
           </button>
-
           <button
             onClick={handleResetData}
             className={`w-full py-3 rounded-xl text-sm font-medium transition-all active:scale-95 ${
-              confirmReset
-                ? 'bg-red-500 text-white'
-                : 'text-red-400 border border-red-200 hover:bg-red-50'
+              confirmReset ? 'bg-red-500 text-white' : 'text-red-400 border border-red-200 hover:bg-red-50'
             }`}
           >
             {confirmReset ? 'もう一度タップで全データを削除' : 'データをリセット'}
@@ -158,11 +186,10 @@ export default function SettingsPage() {
           )}
         </div>
 
-        {/* アプリについて */}
         <div className="bg-gray-50 rounded-2xl p-5 text-center">
           <p className="text-gray-500 text-xs leading-relaxed">
-            禁煙サポートアプリ v0.1.0<br />
-            タバコへの期待と現実のギャップを<br />可視化して禁煙を支援します
+            SmokeLog v0.2.0<br />
+            データはSupabase（PostgreSQL）に<br />セキュアに保存されています 🔒
           </p>
         </div>
       </div>

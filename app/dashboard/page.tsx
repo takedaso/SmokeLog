@@ -5,20 +5,15 @@ import {
   BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid,
   Tooltip, ResponsiveContainer, Legend, ReferenceLine,
 } from 'recharts'
-import { getCravings } from '@/lib/storage'
+import { getCravings } from '@/lib/db'
 import { CravingRecord, SITUATION_LABELS } from '@/lib/types'
 
-// 時間帯別データ
 function buildHourlyData(cravings: CravingRecord[]) {
   const hours = Array.from({ length: 24 }, (_, i) => ({ hour: `${i}時`, count: 0 }))
-  cravings.forEach((c) => {
-    const h = new Date(c.timestamp).getHours()
-    hours[h].count++
-  })
-  return hours.filter((_, i) => i >= 6 || i < 6) // 全時間帯
+  cravings.forEach((c) => { hours[new Date(c.timestamp).getHours()].count++ })
+  return hours
 }
 
-// 期待 vs 実際チャート（直近20件）
 function buildExpectationData(cravings: CravingRecord[]) {
   return cravings
     .filter((c) => c.result && !c.result.resisted && c.result.satisfactionScore !== undefined)
@@ -31,7 +26,6 @@ function buildExpectationData(cravings: CravingRecord[]) {
     }))
 }
 
-// 週次クレービング平均強度
 function buildWeeklyData(cravings: CravingRecord[]) {
   const byWeek: Record<string, number[]> = {}
   cravings.forEach((c) => {
@@ -49,7 +43,6 @@ function buildWeeklyData(cravings: CravingRecord[]) {
   }))
 }
 
-// 状況タグ別分析
 function buildSituationData(cravings: CravingRecord[]) {
   const counts: Record<string, { count: number; totalCraving: number }> = {}
   cravings.forEach((c) => {
@@ -74,14 +67,14 @@ type TabKey = 'hourly' | 'expectation' | 'weekly' | 'situation'
 export default function DashboardPage() {
   const [cravings, setCravings] = useState<CravingRecord[]>([])
   const [tab, setTab] = useState<TabKey>('hourly')
+  const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    setCravings(getCravings())
+    getCravings().then(setCravings).finally(() => setLoading(false))
   }, [])
 
   const totalCravings = cravings.length
   const resistedCount = cravings.filter((c) => c.result?.resisted).length
-  const smokedCount = cravings.filter((c) => c.result?.resisted === false).length
   const resistRate = totalCravings > 0 ? Math.round((resistedCount / totalCravings) * 100) : 0
 
   const smokedWithResult = cravings.filter(
@@ -90,15 +83,11 @@ export default function DashboardPage() {
   const avgGap =
     smokedWithResult.length > 0
       ? (
-          smokedWithResult.reduce((s, c) => s + (c.expectationScore - c.result!.satisfactionScore!), 0) /
-          smokedWithResult.length
+          smokedWithResult.reduce(
+            (s, c) => s + (c.expectationScore - c.result!.satisfactionScore!), 0
+          ) / smokedWithResult.length
         ).toFixed(1)
       : null
-
-  const hourlyData = buildHourlyData(cravings)
-  const expectationData = buildExpectationData(cravings)
-  const weeklyData = buildWeeklyData(cravings)
-  const situationData = buildSituationData(cravings)
 
   const tabs: { key: TabKey; label: string }[] = [
     { key: 'hourly', label: '時間帯' },
@@ -106,6 +95,14 @@ export default function DashboardPage() {
     { key: 'weekly', label: '週次推移' },
     { key: 'situation', label: '状況別' },
   ]
+
+  if (loading) {
+    return (
+      <div className="min-h-full flex items-center justify-center">
+        <p className="text-gray-400 text-sm">読み込み中...</p>
+      </div>
+    )
+  }
 
   if (totalCravings === 0) {
     return (
@@ -122,6 +119,11 @@ export default function DashboardPage() {
     )
   }
 
+  const hourlyData = buildHourlyData(cravings)
+  const expectationData = buildExpectationData(cravings)
+  const weeklyData = buildWeeklyData(cravings)
+  const situationData = buildSituationData(cravings)
+
   return (
     <div className="min-h-full">
       <div className="bg-white px-5 pt-14 pb-4 border-b border-gray-100">
@@ -130,7 +132,6 @@ export default function DashboardPage() {
       </div>
 
       <div className="px-5 py-5 space-y-5">
-        {/* 総合指標 */}
         <div className="grid grid-cols-2 gap-3">
           <div className="bg-white rounded-2xl p-4 shadow-sm">
             <p className="text-xs text-gray-500 mb-1">我慢成功率</p>
@@ -150,7 +151,6 @@ export default function DashboardPage() {
           </div>
         </div>
 
-        {/* タブ切り替え */}
         <div className="flex gap-1 bg-gray-100 p-1 rounded-xl">
           {tabs.map(({ key, label }) => (
             <button
@@ -165,7 +165,6 @@ export default function DashboardPage() {
           ))}
         </div>
 
-        {/* チャートエリア */}
         <div className="bg-white rounded-2xl shadow-sm p-4">
           {tab === 'hourly' && (
             <>
@@ -176,10 +175,7 @@ export default function DashboardPage() {
                   <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
                   <XAxis dataKey="hour" tick={{ fontSize: 10 }} interval={3} />
                   <YAxis tick={{ fontSize: 10 }} allowDecimals={false} />
-                  <Tooltip
-                    contentStyle={{ fontSize: 12, borderRadius: 8, border: 'none', boxShadow: '0 2px 8px rgba(0,0,0,0.1)' }}
-                    formatter={(v) => [`${v}回`, '回数']}
-                  />
+                  <Tooltip contentStyle={{ fontSize: 12, borderRadius: 8, border: 'none', boxShadow: '0 2px 8px rgba(0,0,0,0.1)' }} formatter={(v) => [`${v}回`, '回数']} />
                   <Bar dataKey="count" fill="#9333ea" radius={[4, 4, 0, 0]} name="回数" isAnimationActive={false} />
                 </BarChart>
               </ResponsiveContainer>
@@ -191,18 +187,14 @@ export default function DashboardPage() {
               <p className="font-semibold text-gray-700 mb-1 text-sm">期待 vs 実際の満足度</p>
               <p className="text-xs text-gray-400 mb-4">直近{expectationData.length}回の比較</p>
               {expectationData.length === 0 ? (
-                <div className="text-center py-10 text-gray-400 text-sm">
-                  吸った後の記録がまだありません
-                </div>
+                <div className="text-center py-10 text-gray-400 text-sm">吸った後の記録がまだありません</div>
               ) : (
                 <ResponsiveContainer width="100%" height={200}>
                   <LineChart data={expectationData} margin={{ top: 0, right: 0, bottom: 0, left: -20 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
                     <XAxis dataKey="name" tick={{ fontSize: 10 }} />
                     <YAxis domain={[1, 10]} tick={{ fontSize: 10 }} />
-                    <Tooltip
-                      contentStyle={{ fontSize: 12, borderRadius: 8, border: 'none', boxShadow: '0 2px 8px rgba(0,0,0,0.1)' }}
-                    />
+                    <Tooltip contentStyle={{ fontSize: 12, borderRadius: 8, border: 'none', boxShadow: '0 2px 8px rgba(0,0,0,0.1)' }} />
                     <Legend wrapperStyle={{ fontSize: 12 }} />
                     <ReferenceLine y={5} stroke="#e5e7eb" strokeDasharray="4 4" />
                     <Line type="monotone" dataKey="期待" stroke="#f97316" strokeWidth={2} dot={{ r: 3 }} activeDot={{ r: 5 }} isAnimationActive={false} />
@@ -212,9 +204,7 @@ export default function DashboardPage() {
               )}
               {expectationData.length > 0 && (
                 <div className="mt-4 bg-orange-50 rounded-xl p-3">
-                  <p className="text-xs text-orange-700 leading-relaxed">
-                    オレンジ（期待）が緑（実際）より常に上回っていれば、タバコは期待ほど良くないことを示しています。
-                  </p>
+                  <p className="text-xs text-orange-700 leading-relaxed">オレンジ（期待）が緑（実際）より常に上回っていれば、タバコは期待ほど良くないことを示しています。</p>
                 </div>
               )}
             </>
@@ -225,18 +215,14 @@ export default function DashboardPage() {
               <p className="font-semibold text-gray-700 mb-1 text-sm">週次クレービング強度の推移</p>
               <p className="text-xs text-gray-400 mb-4">禁煙が進むと弱くなっていきます</p>
               {weeklyData.length < 2 ? (
-                <div className="text-center py-10 text-gray-400 text-sm">
-                  2週間以上の記録が必要です
-                </div>
+                <div className="text-center py-10 text-gray-400 text-sm">2週間以上の記録が必要です</div>
               ) : (
                 <ResponsiveContainer width="100%" height={200}>
                   <LineChart data={weeklyData} margin={{ top: 0, right: 0, bottom: 0, left: -20 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
                     <XAxis dataKey="week" tick={{ fontSize: 10 }} />
                     <YAxis domain={[1, 10]} tick={{ fontSize: 10 }} />
-                    <Tooltip
-                      contentStyle={{ fontSize: 12, borderRadius: 8, border: 'none', boxShadow: '0 2px 8px rgba(0,0,0,0.1)' }}
-                    />
+                    <Tooltip contentStyle={{ fontSize: 12, borderRadius: 8, border: 'none', boxShadow: '0 2px 8px rgba(0,0,0,0.1)' }} />
                     <Legend wrapperStyle={{ fontSize: 12 }} />
                     <Line type="monotone" dataKey="平均強度" stroke="#9333ea" strokeWidth={2} dot={{ r: 4 }} activeDot={{ r: 6 }} isAnimationActive={false} />
                     <Line type="monotone" dataKey="回数" stroke="#e5e7eb" strokeWidth={1.5} dot={{ r: 3 }} strokeDasharray="4 4" isAnimationActive={false} />
@@ -251,18 +237,14 @@ export default function DashboardPage() {
               <p className="font-semibold text-gray-700 mb-1 text-sm">状況タグ別分析</p>
               <p className="text-xs text-gray-400 mb-4">どの状況で吸いたくなるか</p>
               {situationData.length === 0 ? (
-                <div className="text-center py-10 text-gray-400 text-sm">
-                  状況タグの記録がまだありません
-                </div>
+                <div className="text-center py-10 text-gray-400 text-sm">状況タグの記録がまだありません</div>
               ) : (
                 <ResponsiveContainer width="100%" height={200}>
                   <BarChart data={situationData} layout="vertical" margin={{ top: 0, right: 10, bottom: 0, left: 10 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" horizontal={false} />
                     <XAxis type="number" tick={{ fontSize: 10 }} allowDecimals={false} />
                     <YAxis dataKey="name" type="category" tick={{ fontSize: 11 }} width={55} />
-                    <Tooltip
-                      contentStyle={{ fontSize: 12, borderRadius: 8, border: 'none', boxShadow: '0 2px 8px rgba(0,0,0,0.1)' }}
-                    />
+                    <Tooltip contentStyle={{ fontSize: 12, borderRadius: 8, border: 'none', boxShadow: '0 2px 8px rgba(0,0,0,0.1)' }} />
                     <Bar dataKey="回数" fill="#9333ea" radius={[0, 4, 4, 0]} isAnimationActive={false} />
                   </BarChart>
                 </ResponsiveContainer>
@@ -271,7 +253,6 @@ export default function DashboardPage() {
           )}
         </div>
 
-        {/* インサイト */}
         {smokedWithResult.length >= 3 && Number(avgGap) >= 2 && (
           <div className="bg-gradient-to-br from-purple-50 to-indigo-50 rounded-2xl p-5">
             <p className="font-semibold text-purple-800 mb-2">💡 あなたへのインサイト</p>

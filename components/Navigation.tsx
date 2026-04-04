@@ -37,6 +37,9 @@ function SettingsIcon({ active }: { active: boolean }) {
 export default function Navigation() {
   const pathname = usePathname()
 
+  // 認証ページではナビゲーションを表示しない
+  if (pathname.startsWith('/auth')) return null
+
   return (
     <nav className="fixed bottom-0 left-0 right-0 max-w-md mx-auto bg-white border-t border-gray-200 z-50">
       <div className="flex">

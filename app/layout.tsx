@@ -1,4 +1,4 @@
-import type { Metadata } from 'next'
+import type { Metadata, Viewport } from 'next'
 import { Inter } from 'next/font/google'
 import './globals.css'
 import Navigation from '@/components/Navigation'
@@ -8,12 +8,12 @@ const inter = Inter({ subsets: ['latin'] })
 export const metadata: Metadata = {
   title: '禁煙サポートアプリ',
   description: 'タバコへの期待と現実のギャップを可視化して禁煙を支援するアプリ',
-  manifest: '/manifest.json',
-  viewport: {
-    width: 'device-width',
-    initialScale: 1,
-    maximumScale: 1,
-  },
+}
+
+export const viewport: Viewport = {
+  width: 'device-width',
+  initialScale: 1,
+  maximumScale: 1,
 }
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

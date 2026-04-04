@@ -2,10 +2,9 @@
 
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
-import { v4 as uuidv4 } from 'uuid'
 import SliderInput from '@/components/SliderInput'
 import SituationTags from '@/components/SituationTags'
-import { saveCraving, getSettings, updateCraving } from '@/lib/storage'
+import { saveCraving, getSettings, updateCraving } from '@/lib/db'
 import { CravingRecord, AppSettings } from '@/lib/types'
 
 type Step = 'form' | 'choice' | 'done'
@@ -19,39 +18,46 @@ export default function RecordPage() {
   const [memo, setMemo] = useState('')
   const [step, setStep] = useState<Step>('form')
   const [savedId, setSavedId] = useState<string | null>(null)
+  const [saving, setSaving] = useState(false)
 
   useEffect(() => {
-    setSettings(getSettings())
+    getSettings().then(setSettings)
   }, [])
 
-  const handleSave = () => {
-    const id = uuidv4()
-    const record: CravingRecord = {
-      id,
-      timestamp: new Date().toISOString(),
-      cravingScore,
-      expectationScore,
-      situation,
-      memo: memo.trim() || undefined,
-      phase: settings.phase,
-    }
-    saveCraving(record)
-    setSavedId(id)
+  const handleSave = async () => {
+    setSaving(true)
+    try {
+      const id = crypto.randomUUID()
+      const record: CravingRecord = {
+        id,
+        timestamp: new Date().toISOString(),
+        cravingScore,
+        expectationScore,
+        situation,
+        memo: memo.trim() || undefined,
+        phase: settings.phase,
+      }
+      await saveCraving(record)
+      setSavedId(id)
 
-    if (settings.phase === 'quitting') {
-      // 禁煙中はそのまま我慢として記録
-      updateCraving(id, {
-        result: { resisted: true, recordedAt: new Date().toISOString() },
-      })
-      setStep('done')
-    } else {
-      setStep('choice')
+      if (settings.phase === 'quitting') {
+        await updateCraving(id, {
+          result: { resisted: true, recordedAt: new Date().toISOString() },
+        })
+        setStep('done')
+      } else {
+        setStep('choice')
+      }
+    } catch (e) {
+      console.error(e)
+    } finally {
+      setSaving(false)
     }
   }
 
-  const handleResist = () => {
+  const handleResist = async () => {
     if (!savedId) return
-    updateCraving(savedId, {
+    await updateCraving(savedId, {
       result: { resisted: true, recordedAt: new Date().toISOString() },
     })
     setStep('done')
@@ -80,7 +86,11 @@ export default function RecordPage() {
           <div className="bg-purple-50 rounded-2xl p-5 text-center mb-2">
             <p className="text-5xl mb-3">🧘</p>
             <p className="font-semibold text-purple-800">あと5分だけ待ってみましょう</p>
-            <p className="text-purple-600 text-sm mt-1">クレービングは通常3〜5分でピークを越えます。<br />深呼吸しながら乗り越えましょう！</p>
+            <p className="text-purple-600 text-sm mt-1">
+              クレービングは通常3〜5分でピークを越えます。
+              <br />
+              深呼吸しながら乗り越えましょう！
+            </p>
           </div>
 
           <button
@@ -97,9 +107,7 @@ export default function RecordPage() {
             吸ってしまった…
           </button>
 
-          <p className="text-center text-gray-400 text-xs">
-            どちらを選んでも記録が学習に使われます
-          </p>
+          <p className="text-center text-gray-400 text-xs">どちらを選んでも記録が学習に使われます</p>
         </div>
       </div>
     )
@@ -111,7 +119,11 @@ export default function RecordPage() {
         <div className="text-center">
           <div className="text-7xl mb-6">🎉</div>
           <h2 className="text-2xl font-bold text-gray-800 mb-2">よく頑張りました！</h2>
-          <p className="text-gray-500 text-sm mb-8">記録が保存されました。<br />この積み重ねが禁煙成功につながります。</p>
+          <p className="text-gray-500 text-sm mb-8">
+            記録が保存されました。
+            <br />
+            この積み重ねが禁煙成功につながります。
+          </p>
           <button
             onClick={() => router.push('/')}
             className="bg-purple-600 text-white font-bold px-8 py-4 rounded-2xl shadow-lg shadow-purple-200 active:scale-95 transition-all"
@@ -174,9 +186,10 @@ export default function RecordPage() {
 
         <button
           onClick={handleSave}
-          className="w-full bg-purple-600 hover:bg-purple-700 active:scale-95 text-white font-bold py-5 rounded-2xl text-lg shadow-lg shadow-purple-200 transition-all"
+          disabled={saving}
+          className="w-full bg-purple-600 hover:bg-purple-700 active:scale-95 text-white font-bold py-5 rounded-2xl text-lg shadow-lg shadow-purple-200 transition-all disabled:opacity-60"
         >
-          記録する
+          {saving ? '保存中...' : '記録する'}
         </button>
       </div>
     </div>

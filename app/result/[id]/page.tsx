@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react'
 import { useRouter, useParams } from 'next/navigation'
 import SliderInput from '@/components/SliderInput'
-import { getCravings, updateCraving } from '@/lib/storage'
+import { getCravingById, updateCraving } from '@/lib/db'
 import { CravingRecord } from '@/lib/types'
 
 export default function ResultPage() {
@@ -15,24 +15,39 @@ export default function ResultPage() {
   const [satisfactionScore, setSatisfactionScore] = useState(5)
   const [memo, setMemo] = useState('')
   const [saved, setSaved] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    const cravings = getCravings()
-    const found = cravings.find((c) => c.id === id)
-    if (found) setRecord(found)
+    getCravingById(id)
+      .then((r) => setRecord(r))
+      .finally(() => setLoading(false))
   }, [id])
 
-  const handleSave = () => {
+  const handleSave = async () => {
     if (!record) return
-    updateCraving(id, {
-      result: {
-        resisted: false,
-        satisfactionScore,
-        recordedAt: new Date().toISOString(),
-        memo: memo.trim() || undefined,
-      },
-    })
-    setSaved(true)
+    setSaving(true)
+    try {
+      await updateCraving(id, {
+        result: {
+          resisted: false,
+          satisfactionScore,
+          recordedAt: new Date().toISOString(),
+          memo: memo.trim() || undefined,
+        },
+      })
+      setSaved(true)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center min-h-full">
+        <p className="text-gray-400 text-sm">読み込み中...</p>
+      </div>
+    )
   }
 
   if (!record) {
@@ -47,10 +62,29 @@ export default function ResultPage() {
   const gapAbs = Math.abs(gap)
 
   const gapMessage = () => {
-    if (gap <= -2) return { emoji: '😮', text: `期待より${gapAbs}点も上回りました！でも、これが続くと思いますか？`, color: 'text-blue-600' }
-    if (gap >= 3) return { emoji: '💡', text: `期待${record.expectationScore}点に対して実際${satisfactionScore}点。${gap}点のがっかりです。タバコは期待ほどよくないかもしれません。`, color: 'text-orange-600' }
-    if (gap >= 1) return { emoji: '🤔', text: `期待${record.expectationScore}点に対して実際${satisfactionScore}点。わずかにがっかり。`, color: 'text-yellow-600' }
-    return { emoji: '📊', text: `期待通りの満足感でした。記録が積み重なるとパターンが見えてきます。`, color: 'text-gray-600' }
+    if (gap <= -2)
+      return {
+        emoji: '😮',
+        text: `期待より${gapAbs}点も上回りました！でも、これが続くと思いますか？`,
+        color: 'text-blue-600',
+      }
+    if (gap >= 3)
+      return {
+        emoji: '💡',
+        text: `期待${record.expectationScore}点に対して実際${satisfactionScore}点。${gap}点のがっかりです。タバコは期待ほどよくないかもしれません。`,
+        color: 'text-orange-600',
+      }
+    if (gap >= 1)
+      return {
+        emoji: '🤔',
+        text: `期待${record.expectationScore}点に対して実際${satisfactionScore}点。わずかにがっかり。`,
+        color: 'text-yellow-600',
+      }
+    return {
+      emoji: '📊',
+      text: `期待通りの満足感でした。記録が積み重なるとパターンが見えてきます。`,
+      color: 'text-gray-600',
+    }
   }
 
   if (saved) {
@@ -72,13 +106,17 @@ export default function ResultPage() {
             </div>
             <div className="flex justify-between items-center">
               <span className="text-sm text-gray-500">差分</span>
-              <span className={`font-bold text-lg ${gap > 0 ? 'text-orange-500' : gap < 0 ? 'text-blue-500' : 'text-gray-700'}`}>
+              <span
+                className={`font-bold text-lg ${
+                  gap > 0 ? 'text-orange-500' : gap < 0 ? 'text-blue-500' : 'text-gray-700'
+                }`}
+              >
                 {gap > 0 ? `-${gap}` : gap < 0 ? `+${gapAbs}` : '±0'}点
               </span>
             </div>
           </div>
 
-          <div className={`bg-orange-50 rounded-2xl p-4 mb-6 text-left ${gap >= 3 ? '' : 'bg-gray-50'}`}>
+          <div className={`rounded-2xl p-4 mb-6 text-left ${gap >= 3 ? 'bg-orange-50' : 'bg-gray-50'}`}>
             <p className={`text-sm leading-relaxed ${msg.color}`}>{msg.text}</p>
           </div>
 
@@ -109,17 +147,22 @@ export default function ResultPage() {
       </div>
 
       <div className="px-5 py-6 space-y-6">
-        {/* 吸う前の記録サマリー */}
         <div className="bg-gray-50 rounded-2xl p-4">
           <p className="text-xs font-semibold text-gray-500 mb-3 uppercase tracking-wide">吸う前の記録</p>
           <div className="flex gap-6">
             <div>
               <p className="text-xs text-gray-400">吸いたい強度</p>
-              <p className="text-2xl font-bold text-gray-700">{record.cravingScore}<span className="text-sm font-normal text-gray-400">/10</span></p>
+              <p className="text-2xl font-bold text-gray-700">
+                {record.cravingScore}
+                <span className="text-sm font-normal text-gray-400">/10</span>
+              </p>
             </div>
             <div>
               <p className="text-xs text-gray-400">期待スコア</p>
-              <p className="text-2xl font-bold text-orange-500">{record.expectationScore}<span className="text-sm font-normal text-gray-400">/10</span></p>
+              <p className="text-2xl font-bold text-orange-500">
+                {record.expectationScore}
+                <span className="text-sm font-normal text-gray-400">/10</span>
+              </p>
             </div>
           </div>
         </div>
@@ -134,7 +177,6 @@ export default function ResultPage() {
           color="green"
         />
 
-        {/* リアルタイムギャップ表示 */}
         <div className={`rounded-2xl p-4 ${gap >= 3 ? 'bg-orange-50' : gap <= -2 ? 'bg-blue-50' : 'bg-gray-50'}`}>
           <div className="flex items-center gap-2 mb-1">
             <span className="text-xl">{msg.emoji}</span>
@@ -166,9 +208,10 @@ export default function ResultPage() {
 
         <button
           onClick={handleSave}
-          className="w-full bg-purple-600 hover:bg-purple-700 active:scale-95 text-white font-bold py-5 rounded-2xl text-lg shadow-lg shadow-purple-200 transition-all"
+          disabled={saving}
+          className="w-full bg-purple-600 hover:bg-purple-700 active:scale-95 text-white font-bold py-5 rounded-2xl text-lg shadow-lg shadow-purple-200 transition-all disabled:opacity-60"
         >
-          記録する
+          {saving ? '保存中...' : '記録する'}
         </button>
       </div>
     </div>
