@@ -1,0 +1,580 @@
+<title>領収書台帳</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zen+Kaku+Gothic+New:wght@400;500;700&family=IBM+Plex+Mono:wght@500&display=swap">
+<style>
+/* Layout: one-column ledger app, sticky header, fixed bottom tabs, camera FAB above tabs */
+:root {
+  --bg: #f3f5f7; --surface: #ffffff; --line: #d9dfe5; --fg: #17222c; --muted: #5f6d7a;
+  --accent: #1d5a86; --accent-weak: #e2edf5; --stamp: #b8322a; --stamp-weak: #f8e4e1;
+  --ok: #2f7a4b; --ok-weak: #e1f1e6; --warn: #8a6100; --warn-weak: #fbf0d6;
+  --font-body: "Zen Kaku Gothic New", "Hiragino Sans", "Noto Sans JP", system-ui, sans-serif;
+  --font-num: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+  --tab-h: 60px;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #11171c; --surface: #19222a; --line: #2c3842; --fg: #e5ebf0; --muted: #94a3b0;
+  --accent: #6fb0e0; --accent-weak: #1c3346; --stamp: #f07a6f; --stamp-weak: #3d2220;
+  --ok: #7cc996; --ok-weak: #1c3325; --warn: #e6bd5c; --warn-weak: #3a3018; color-scheme: dark; } }
+:root[data-theme="dark"] {
+  --bg: #11171c; --surface: #19222a; --line: #2c3842; --fg: #e5ebf0; --muted: #94a3b0;
+  --accent: #6fb0e0; --accent-weak: #1c3346; --stamp: #f07a6f; --stamp-weak: #3d2220;
+  --ok: #7cc996; --ok-weak: #1c3325; --warn: #e6bd5c; --warn-weak: #3a3018; color-scheme: dark; }
+
+* { box-sizing: border-box; }
+body { background: var(--bg); color: var(--fg); font-family: var(--font-body); font-size: 15px; line-height: 1.55; }
+body::before { content: ""; position: fixed; inset: 0 0 auto; height: env(safe-area-inset-top, 0px); z-index: 10; background: var(--surface); }
+.num { font-family: var(--font-num); font-variant-numeric: tabular-nums; }
+button, input, select, textarea { font: inherit; color: inherit; }
+button { cursor: pointer; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.top { position: sticky; top: env(safe-area-inset-top, 0px); z-index: 5; background: var(--surface); border-bottom: 1px solid var(--line);
+  padding-block: 10px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+  display: flex; align-items: center; gap: 10px; }
+.top h1 { font-size: 17px; margin: 0; font-weight: 700; letter-spacing: .02em; }
+.top .ws { margin-left: auto; font-size: 12px; color: var(--muted); }
+.seal { width: 26px; height: 26px; border: 2px solid var(--stamp); color: var(--stamp); border-radius: 50%; display: grid; place-items: center; font-size: 12px; font-weight: 700; flex: none; }
+
+main { max-width: 760px; margin: 0 auto; padding-block: 16px calc(var(--tab-h) + 96px + env(safe-area-inset-bottom, 0px));
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+  display: flex; flex-direction: column; gap: 18px; }
+h2 { font-size: 15px; margin: 0; font-weight: 700; text-wrap: balance; }
+.sec { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.sec-head { display: flex; align-items: baseline; gap: 8px; }
+.sec-head .sub { color: var(--muted); font-size: 12px; }
+.sec-head a, .linkbtn { margin-left: auto; color: var(--accent); font-size: 13px; text-decoration: none; background: none; border: 0; padding: 0; }
+
+.stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.stat { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; min-width: 0; }
+.stat .k { font-size: 11px; color: var(--muted); letter-spacing: .04em; }
+.stat .v { font-size: 20px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.stat.alert .v { color: var(--stamp); }
+
+.list { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.row { display: grid; grid-template-columns: 44px minmax(0, 1fr) auto; gap: 10px; align-items: center; padding: 10px 12px; border-top: 1px solid var(--line); text-decoration: none; color: inherit; }
+.row:first-child { border-top: 0; }
+.row:hover { background: var(--accent-weak); }
+.thumb { width: 44px; height: 56px; border-radius: 4px; background: var(--bg) center/cover no-repeat; border: 1px solid var(--line); }
+.row .t { font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.row .m { font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.row .amt { text-align: right; display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
+.empty { padding: 22px 16px; color: var(--muted); font-size: 14px; text-align: left; }
+
+.pill { display: inline-block; font-size: 11px; padding: 1px 8px; border-radius: 999px; font-weight: 500; white-space: nowrap; }
+.pill.processing { background: var(--accent-weak); color: var(--accent); }
+.pill.needs_review { background: var(--stamp-weak); color: var(--stamp); }
+.pill.confirmed { background: var(--ok-weak); color: var(--ok); }
+.pill.void { background: var(--bg); color: var(--muted); text-decoration: line-through; }
+
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 14px; display: flex; flex-direction: column; gap: 12px; }
+.grid2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+@media (max-width: 420px) { .grid2 { grid-template-columns: 1fr; } }
+.f { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.f label { font-size: 12px; color: var(--muted); letter-spacing: .03em; }
+.f input, .f select, .f textarea { width: 100%; padding: 9px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); min-height: 42px; }
+.f textarea { min-height: 64px; resize: vertical; }
+.f.low input, .f.low select { border-color: var(--warn); background: var(--warn-weak); }
+.f .hint { font-size: 11px; color: var(--warn); }
+.f.err input { border-color: var(--stamp); }
+
+.btns { display: flex; flex-wrap: wrap; gap: 8px; }
+.btn { border: 1px solid var(--line); background: var(--surface); padding: 10px 16px; border-radius: 6px; min-height: 44px; font-weight: 500; }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--surface); }
+.btn.danger { color: var(--stamp); border-color: var(--stamp); }
+.btn:disabled { opacity: .5; cursor: default; }
+.btn.grow { flex: 1 1 140px; }
+
+.notice { border-radius: 6px; padding: 10px 12px; font-size: 13px; }
+.notice.warn { background: var(--warn-weak); color: var(--warn); }
+.notice.err { background: var(--stamp-weak); color: var(--stamp); }
+.notice.info { background: var(--accent-weak); color: var(--accent); }
+
+.photo { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; display: grid; place-items: center; }
+.photo img { display: block; max-height: 46vh; width: auto; max-width: 100%; cursor: zoom-in; }
+.photo.zoom img { max-height: none; width: 100%; cursor: zoom-out; }
+.photo .none { padding: 40px; color: var(--muted); }
+
+.seg { display: flex; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 3px; gap: 3px; overflow-x: auto; }
+.seg button { flex: 1 0 auto; border: 0; background: none; padding: 8px 12px; border-radius: 6px; font-size: 14px; color: var(--muted); min-height: 38px; }
+.seg button[aria-pressed="true"] { background: var(--accent-weak); color: var(--accent); font-weight: 700; }
+
+.filters { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.filters .f input, .filters .f select { min-height: 38px; padding: 6px 8px; font-size: 14px; }
+.filters .wide { grid-column: 1 / -1; }
+
+.bars .row { grid-template-columns: minmax(0, 1fr) auto; }
+.bar { height: 6px; border-radius: 3px; background: var(--accent); margin-top: 6px; }
+.bar-track { background: var(--accent-weak); border-radius: 3px; }
+.totalline { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+.totalline .v { font-size: 26px; font-weight: 500; }
+
+.history { font-size: 12px; color: var(--muted); display: flex; flex-direction: column; gap: 6px; }
+.history div { border-left: 2px solid var(--line); padding-left: 8px; }
+
+.tabs { position: fixed; left: 0; right: 0; bottom: 0; z-index: 6; background: var(--surface); border-top: 1px solid var(--line);
+  display: grid; grid-template-columns: repeat(4, 1fr);
+  padding-bottom: env(safe-area-inset-bottom, 0px); padding-left: max(8px, env(safe-area-inset-left, 0px)); padding-right: max(8px, env(safe-area-inset-right, 0px)); }
+.tabs a { height: var(--tab-h); display: grid; place-items: center; text-decoration: none; color: var(--muted); font-size: 13px; font-weight: 500; }
+.tabs a[aria-current="page"] { color: var(--accent); font-weight: 700; box-shadow: inset 0 3px 0 var(--accent); }
+
+.fabs { position: fixed; z-index: 7; right: max(16px, calc(env(safe-area-inset-right, 0px) + 16px)); bottom: calc(var(--tab-h) + 14px + env(safe-area-inset-bottom, 0px)); display: flex; gap: 8px; align-items: center; }
+.fab { display: inline-flex; align-items: center; gap: 8px; background: var(--stamp); color: var(--surface); border-radius: 999px; padding: 0 20px; height: 54px; font-weight: 700; box-shadow: 0 4px 14px rgba(0,0,0,.22); cursor: pointer; }
+.fab.sub { background: var(--surface); color: var(--fg); border: 1px solid var(--line); height: 44px; padding: 0 14px; font-weight: 500; font-size: 13px; box-shadow: 0 2px 8px rgba(0,0,0,.12); }
+.fab svg { width: 22px; height: 22px; }
+
+.toast { position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(var(--tab-h) + 80px + env(safe-area-inset-bottom, 0px)); z-index: 9;
+  background: var(--fg); color: var(--bg); padding: 10px 16px; border-radius: 8px; font-size: 14px; max-width: calc(100% - 32px); }
+.inline-confirm { display: flex; flex-direction: column; gap: 8px; border: 1px dashed var(--stamp); border-radius: 6px; padding: 10px; }
+@media (prefers-reduced-motion: no-preference) { .row, .btn { transition: background .15s; } }
+</style>
+
+<header class="top">
+  <div class="seal" aria-hidden="true">領</div>
+  <h1>領収書台帳</h1>
+  <span class="ws" id="ws-status">接続中…</span>
+</header>
+
+<main id="app">
+  <section class="sec"><div class="list"><div class="empty">台帳を読み込んでいる。右下の「撮影」から領収書を登録できる。</div></div></section>
+</main>
+
+<div class="fabs">
+  <label class="fab sub" for="pick">写真を選ぶ</label>
+  <label class="fab" for="cam">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/></svg>
+    撮影
+  </label>
+</div>
+<input type="file" id="cam" accept="image/*" capture="environment" hidden>
+<input type="file" id="pick" accept="image/*" multiple hidden>
+
+<nav class="tabs" aria-label="メインメニュー">
+  <a href="#home" data-tab="home">ホーム</a>
+  <a href="#list" data-tab="list">一覧</a>
+  <a href="#summary" data-tab="summary">集計</a>
+  <a href="#master" data-tab="master">マスタ</a>
+</nav>
+<div class="toast" id="toast" hidden></div>
+
+<script>
+(() => {
+  const CATEGORIES = ["旅費交通費", "会議費", "交際費", "消耗品費", "通信費", "新聞図書費", "支払手数料", "雑費"];
+  const PAYMENTS = ["現金", "クレジットカード", "電子マネー", "QRコード決済", "その他"];
+  const STATUS_LABEL = { processing: "読取中", needs_review: "要確認", confirmed: "確定", void: "取消" };
+  const yen = n => (n == null || n === "" || isNaN(n)) ? "—" : "¥" + Number(n).toLocaleString("ja-JP");
+  const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  const newId = p => p + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+  const today = () => new Date().toISOString().slice(0, 10);
+  const $ = sel => document.querySelector(sel);
+  const ls = { get(k, d) { try { const v = localStorage.getItem(k); return v == null ? d : JSON.parse(v); } catch { return d; } },
+               set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} } };
+
+  const S = { db: null, assets: null, sample: null, user: null, downloads: null, me: null, aiOk: false,
+              customers: [], projects: [], receipts: [], loaded: { c: false, p: false, r: false }, offline: false,
+              filters: ls.get("rl.filters", {}), axis: ls.get("rl.axis", "project"), period: ls.get("rl.period", { from: "", to: "" }),
+              zoom: false, voiding: false, processing: 0 };
+
+  function toast(msg) { const t = $("#toast"); t.textContent = msg; t.hidden = false; clearTimeout(toast.h); toast.h = setTimeout(() => t.hidden = true, 2600); }
+  const imgUrl = r => r.assetId ? "/_blob/" + r.assetId : (r.thumb || "");
+  const cust = id => S.customers.find(c => c.id === id);
+  const proj = id => S.projects.find(p => p.id === id);
+  const custName = id => cust(id)?.name || "";
+  const projName = id => proj(id)?.name || "";
+
+  // ---------- boot ----------
+  async function boot() {
+    route();
+    const [db, assets, sample, user, downloads] = await Promise.all(["db", "assets", "sample", "user", "downloads"].map(n => claude.use(n).catch(() => null)));
+    Object.assign(S, { db, assets, sample, user, downloads });
+    if (user) { try { S.me = await user.id(); } catch {} }
+    if (sample) { try { const lim = await sample.limits(); S.aiOk = !!lim?.images; } catch { S.aiOk = false; } }
+    if (!db) { S.offline = true; $("#ws-status").textContent = "保存先に接続できない"; render(); return; }
+    $("#ws-status").textContent = S.aiOk ? "AI読取 有効" : "手入力モード";
+    const timer = setTimeout(() => { if (!S.loaded.r) { $("#ws-status").textContent = "読込に時間がかかっている"; } }, 10000);
+    const sub = (name, key, flag) => db.collection(name).onSnapshot(snap => {
+      S[key] = snap.docs.map(d => ({ id: d.id, ...d.data() })); S.loaded[flag] = true;
+      if (flag === "r") clearTimeout(timer); render();
+    }, e => { $("#ws-status").textContent = "読込エラー（" + e.code + "）"; });
+    sub("customers", "customers", "c"); sub("projects", "projects", "p"); sub("receipts", "receipts", "r");
+  }
+
+  // ---------- routing ----------
+  function route() { render(); window.scrollTo(0, 0); }
+  window.addEventListener("hashchange", () => { document.activeElement?.blur(); S.zoom = false; S.voiding = false; route(); });
+  function view() { const h = location.hash.slice(1); if (h.startsWith("r-")) return { name: "receipt", id: h.slice(2) }; return { name: ["home", "list", "summary", "master"].includes(h) ? h : "home" }; }
+
+  // ---------- capture ----------
+  async function compress(file, maxSide = 1800, q = 0.85) {
+    const bmp = await createImageBitmap(file).catch(() => null);
+    if (!bmp) return file;
+    const s = Math.min(1, maxSide / Math.max(bmp.width, bmp.height));
+    const c = document.createElement("canvas"); c.width = Math.round(bmp.width * s); c.height = Math.round(bmp.height * s);
+    c.getContext("2d").drawImage(bmp, 0, 0, c.width, c.height);
+    return await new Promise(res => c.toBlob(b => res(b || file), "image/jpeg", q));
+  }
+  async function sha256(blob) { const buf = await blob.arrayBuffer(); const h = await crypto.subtle.digest("SHA-256", buf); return [...new Uint8Array(h)].map(b => b.toString(16).padStart(2, "0")).join(""); }
+
+  async function handleFiles(files) {
+    if (!S.db) { toast("保存先に接続できないため登録できない"); return; }
+    const list = [...files]; let firstId = null;
+    for (const file of list) {
+      try {
+        const hash = await sha256(file);
+        const dup = S.receipts.find(r => r.sha256 === hash && r.status !== "void");
+        if (dup) { toast("同じ画像が登録済みのためスキップした"); continue; }
+        const blob = await compress(file);
+        let assetId = null, thumb = null;
+        if (S.assets) { try { assetId = (await S.assets.upload(blob, { type: "image/jpeg" })).id; } catch (e) { toast("画像の保存に失敗した（" + (e.code || "error") + "）"); } }
+        if (!assetId) thumb = await blobToDataUrl(await compress(file, 700, 0.6));
+        const id = newId("r"); firstId = firstId || id;
+        const last = ls.get("rl.last", {});
+        const doc = { status: S.aiOk ? "processing" : "needs_review", sha256: hash, assetId, thumb,
+          issuedOn: "", vendor: "", regNo: "", total: null, tax10: null, tax8: null, payment: "", description: "",
+          category: "", customerId: last.customerId || "", projectId: last.projectId || "", memo: "",
+          createdBy: S.me || "", createdAt: new Date().toISOString(), confirmedAt: "", voidReason: "",
+          confidence: {}, ocrError: "", history: [{ at: new Date().toISOString(), by: S.me || "", action: "登録" }] };
+        await S.db.collection("receipts").doc(id).set(doc);
+        if (S.aiOk) extract(id, blob);
+      } catch (e) { toast("登録に失敗した（" + (e.code || e.message || "error") + "）"); }
+    }
+    if (firstId) { toast(list.length > 1 ? list.length + "枚を登録した。読取が終わったものから確認できる" : "登録した。読取中…"); if (list.length === 1) location.hash = "r-" + firstId; }
+  }
+  const blobToDataUrl = b => new Promise(res => { const fr = new FileReader(); fr.onload = () => res(fr.result); fr.readAsDataURL(b); });
+  $("#cam").addEventListener("change", e => { handleFiles(e.target.files); e.target.value = ""; });
+  $("#pick").addEventListener("change", e => { handleFiles(e.target.files); e.target.value = ""; });
+
+  async function extract(id, blob) {
+    S.processing++; render();
+    const prompt = `あなたは日本の領収書・レシートの読み取り担当である。添付画像は1枚の領収書またはレシートの写真である。
+次のキーを持つJSONオブジェクトだけを返すこと。読み取れない項目は null とする。
+- is_receipt: 領収書/レシートなら true
+- issued_on: 取引日 "YYYY-MM-DD"（和暦は西暦に変換。令和n年 = 2018+n年）
+- vendor: 発行者（店名・会社名）
+- reg_no: 適格請求書発行事業者登録番号 "T"+13桁（ハイフン・空白は除く）
+- total: 税込合計金額（整数、円）
+- tax10: 10%対象の消費税額（整数）。内税表記の場合も税額を記載
+- tax8: 8%（軽減税率）対象の消費税額（整数）
+- payment: 支払方法。次から選ぶ: ${PAYMENTS.join(" / ")}
+- description: 但し書き・主な品目（30文字以内）
+- category: 勘定科目の推定。次から選ぶ: ${CATEGORIES.join(" / ")}
+- confidence: 各キー(issued_on, vendor, reg_no, total, tax10, tax8)の確からしさ 0〜1 の数値オブジェクト`;
+    try {
+      const r = await S.sample.json(prompt, { images: [blob], modelTier: "default", cache: false });
+      const cur = (await S.db.doc("receipts/" + id).get()).data() || {};
+      const toInt = v => (v == null || v === "" || isNaN(Number(v))) ? null : Math.round(Number(v));
+      const patch = { status: "needs_review", issuedOn: /^\d{4}-\d{2}-\d{2}$/.test(r?.issued_on || "") ? r.issued_on : "",
+        vendor: r?.vendor || "", regNo: (r?.reg_no || "").replace(/[^T0-9]/g, ""), total: toInt(r?.total), tax10: toInt(r?.tax10), tax8: toInt(r?.tax8),
+        payment: PAYMENTS.includes(r?.payment) ? r.payment : "", description: r?.description || "",
+        category: CATEGORIES.includes(r?.category) ? r.category : "", confidence: r?.confidence || {},
+        ocrError: r?.is_receipt === false ? "領収書ではない可能性がある" : "" };
+      // 取引先の過去実績から科目・案件を推定（同じ取引先の直近確定分）
+      const prev = S.receipts.filter(x => x.status === "confirmed" && x.vendor && patch.vendor && x.vendor === patch.vendor).sort((a, b) => (b.confirmedAt || "").localeCompare(a.confirmedAt || ""))[0];
+      if (prev) { patch.category = prev.category || patch.category; if (!cur.projectId && prev.projectId) { patch.projectId = prev.projectId; patch.customerId = prev.customerId; } }
+      patch.history = [...(cur.history || []), { at: new Date().toISOString(), by: "", action: "AI読取完了" }];
+      await S.db.doc("receipts/" + id).update(patch);
+    } catch (e) {
+      const msg = e?.code === "not_granted" ? "AI読取が許可されていないため手入力で登録する" : e?.code === "rate_limited" ? "AI読取の回数制限に達したため手入力で登録する" : "AI読取に失敗したため手入力で登録する";
+      try { await S.db.doc("receipts/" + id).update({ status: "needs_review", ocrError: msg }); } catch {}
+      if (e?.code === "not_granted") S.aiOk = false;
+    } finally { S.processing--; render(); }
+  }
+
+  // ---------- render ----------
+  function render() {
+    const v = view();
+    document.querySelectorAll(".tabs a").forEach(a => a.setAttribute("aria-current", a.dataset.tab === (v.name === "receipt" ? "" : v.name) ? "page" : "false"));
+    const app = $("#app");
+    const active = document.activeElement; const keepId = active && active.id && app.contains(active) ? active.id : null;
+    if (v.name === "receipt" && keepId) return; // 入力中は再描画しない
+    if (v.name === "list" && keepId && keepId.startsWith("flt-")) { renderListRows(); return; }
+    if (v.name === "master" && keepId) return;
+    app.innerHTML = v.name === "home" ? homeView() : v.name === "list" ? listView() : v.name === "summary" ? summaryView() : v.name === "master" ? masterView() : receiptView(v.id);
+    if (v.name === "list") renderListRows();
+    bind(v);
+  }
+
+  function rowHtml(r) {
+    const sub = [r.issuedOn || "日付未入力", custName(r.customerId), projName(r.projectId)].filter(Boolean).join(" · ");
+    const u = imgUrl(r);
+    return `<a class="row" href="#r-${r.id}"><div class="thumb" style="${u ? `background-image:url('${u}')` : ""}"></div>
+      <div style="min-width:0"><div class="t">${esc(r.vendor || (r.status === "processing" ? "読み取り中…" : "取引先未入力"))}</div><div class="m">${esc(sub)}</div></div>
+      <div class="amt"><span class="num">${yen(r.total)}</span><span class="pill ${r.status}">${STATUS_LABEL[r.status]}</span></div></a>`;
+  }
+
+  function homeView() {
+    if (S.offline) return `<div class="notice err">保存先（共有データベース）に接続できない。claude.ai にサインインした状態で開くと利用できる。</div>`;
+    const pending = S.receipts.filter(r => r.status === "needs_review" || r.status === "processing").sort((a, b) => (b.createdAt || "").localeCompare(a.createdAt || ""));
+    const ym = today().slice(0, 7);
+    const monthConf = S.receipts.filter(r => r.status === "confirmed" && (r.issuedOn || "").startsWith(ym));
+    const recent = S.receipts.filter(r => r.status === "confirmed").sort((a, b) => (b.confirmedAt || "").localeCompare(a.confirmedAt || "")).slice(0, 5);
+    const noMaster = S.loaded.c && S.customers.length === 0;
+    return `
+      <div class="stats">
+        <div class="stat ${pending.length ? "alert" : ""}"><div class="k">要確認</div><div class="v num">${pending.length}</div></div>
+        <div class="stat"><div class="k">今月の確定件数</div><div class="v num">${monthConf.length}</div></div>
+        <div class="stat"><div class="k">今月の確定額</div><div class="v num">${yen(monthConf.reduce((s, r) => s + (r.total || 0), 0))}</div></div>
+      </div>
+      ${noMaster ? `<div class="notice info">顧客・案件がまだない。<a href="#master">マスタ</a>で登録すると、領収書を案件に振り分けられる。</div>` : ""}
+      ${!S.aiOk && S.loaded.r ? `<div class="notice warn">この表示ではAI読取が使えないため、撮影後に項目を手入力する。</div>` : ""}
+      <section class="sec"><div class="sec-head"><h2>要確認キュー</h2><span class="sub">撮影済み・未確定</span></div>
+        <div class="list">${pending.length ? pending.map(rowHtml).join("") : `<div class="empty">${S.loaded.r ? "未確認の領収書はない。右下の「撮影」で領収書を撮ると、AIが日付・取引先・金額を読み取ってここに並ぶ。" : "読み込み中…"}</div>`}</div></section>
+      <section class="sec"><div class="sec-head"><h2>最近確定した領収書</h2><a href="#list">すべて見る</a></div>
+        <div class="list">${recent.length ? recent.map(rowHtml).join("") : `<div class="empty">確定済みの領収書はまだない。</div>`}</div></section>`;
+  }
+
+  // ---- receipt detail / review ----
+  function receiptView(id) {
+    const r = S.receipts.find(x => x.id === id);
+    if (!r) return `<div class="notice ${S.loaded.r ? "err" : "info"}">${S.loaded.r ? "この領収書は見つからない。" : "読み込み中…"}</div><a class="btn" href="#home">ホームへ戻る</a>`;
+    const conf = r.confidence || {};
+    const low = k => conf[k] != null && conf[k] < 0.8 ? " low" : "";
+    const lowHint = k => conf[k] != null && conf[k] < 0.8 ? `<span class="hint">読取の確度が低い。画像と照合すること</span>` : "";
+    const dup = S.receipts.find(x => x.id !== r.id && x.status !== "void" && r.issuedOn && r.total != null && x.issuedOn === r.issuedOn && x.total === r.total);
+    const projOpts = S.projects.filter(p => !r.customerId || p.customerId === r.customerId);
+    const u = imgUrl(r);
+    const ro = r.status === "void";
+    return `
+      <div class="sec-head"><button type="button" id="back" class="linkbtn" style="margin-left:0">← 戻る</button><span class="pill ${r.status}" style="margin-left:auto">${STATUS_LABEL[r.status]}</span></div>
+      <div class="photo ${S.zoom ? "zoom" : ""}" id="photo">${u ? `<img src="${u}" alt="領収書の画像">` : `<div class="none">画像なし</div>`}</div>
+      ${r.status === "processing" ? `<div class="notice info">AIが読み取り中。数秒で項目が入る。</div>` : ""}
+      ${r.ocrError ? `<div class="notice warn">${esc(r.ocrError)}</div>` : ""}
+      ${dup ? `<div class="notice err">同じ日付・金額の領収書がある：<a href="#r-${dup.id}">${esc(dup.vendor || "取引先未入力")}（${STATUS_LABEL[dup.status]}）</a>。重複でないか確認すること。</div>` : ""}
+      ${r.status === "void" ? `<div class="notice err">取消済み。理由：${esc(r.voidReason)}</div>` : ""}
+      <form class="card" id="rform" novalidate>
+        <div class="grid2">
+          <div class="f${low("issued_on")}"><label for="f-issuedOn">取引日 *</label><input type="date" id="f-issuedOn" value="${esc(r.issuedOn)}" ${ro ? "disabled" : ""}>${lowHint("issued_on")}</div>
+          <div class="f${low("total")}"><label for="f-total">税込合計（円） *</label><input type="number" inputmode="numeric" id="f-total" class="num" value="${r.total ?? ""}" ${ro ? "disabled" : ""}>${lowHint("total")}</div>
+        </div>
+        <div class="f${low("vendor")}"><label for="f-vendor">取引先 *</label><input id="f-vendor" value="${esc(r.vendor)}" ${ro ? "disabled" : ""}>${lowHint("vendor")}</div>
+        <div class="grid2">
+          <div class="f${low("tax10")}"><label for="f-tax10">消費税 10%</label><input type="number" inputmode="numeric" id="f-tax10" class="num" value="${r.tax10 ?? ""}" ${ro ? "disabled" : ""}></div>
+          <div class="f${low("tax8")}"><label for="f-tax8">消費税 8%（軽減）</label><input type="number" inputmode="numeric" id="f-tax8" class="num" value="${r.tax8 ?? ""}" ${ro ? "disabled" : ""}></div>
+        </div>
+        <div class="grid2">
+          <div class="f${low("reg_no")}"><label for="f-regNo">登録番号（T+13桁）</label><input id="f-regNo" class="num" placeholder="T1234567890123" value="${esc(r.regNo)}" ${ro ? "disabled" : ""}></div>
+          <div class="f"><label for="f-payment">支払方法</label><select id="f-payment" ${ro ? "disabled" : ""}><option value="">—</option>${PAYMENTS.map(p => `<option ${p === r.payment ? "selected" : ""}>${p}</option>`).join("")}</select></div>
+        </div>
+        <div class="f"><label for="f-description">但し書き・品目</label><input id="f-description" value="${esc(r.description)}" ${ro ? "disabled" : ""}></div>
+        <div class="grid2">
+          <div class="f"><label for="f-customerId">顧客</label><select id="f-customerId" ${ro ? "disabled" : ""}><option value="">（社内経費）</option>${S.customers.filter(c => !c.archived || c.id === r.customerId).map(c => `<option value="${c.id}" ${c.id === r.customerId ? "selected" : ""}>${esc(c.name)}</option>`).join("")}</select></div>
+          <div class="f"><label for="f-projectId">案件</label><select id="f-projectId" ${ro ? "disabled" : ""}><option value="">（案件なし）</option>${projOpts.filter(p => p.status !== "closed" || p.id === r.projectId).map(p => `<option value="${p.id}" ${p.id === r.projectId ? "selected" : ""}>${esc(p.name)}${r.customerId ? "" : "（" + esc(custName(p.customerId)) + "）"}</option>`).join("")}</select></div>
+        </div>
+        <div class="f"><label for="f-category">勘定科目</label><select id="f-category" ${ro ? "disabled" : ""}><option value="">—</option>${CATEGORIES.map(c => `<option ${c === r.category ? "selected" : ""}>${c}</option>`).join("")}</select></div>
+        <div class="f"><label for="f-memo">メモ</label><textarea id="f-memo" ${ro ? "disabled" : ""}>${esc(r.memo)}</textarea></div>
+        <div id="form-msg"></div>
+        ${ro ? "" : `<div class="btns">
+          ${r.status === "confirmed" ? `<button type="submit" class="btn primary grow" data-act="confirm">修正を保存</button>`
+            : `<button type="submit" class="btn primary grow" data-act="next">確定して次へ</button><button type="button" class="btn grow" data-act="confirm">確定</button><button type="button" class="btn" data-act="draft">下書き保存</button>`}
+        </div>`}
+        ${ro ? "" : S.voiding ? `<div class="inline-confirm"><div class="f"><label for="f-voidReason">取消の理由 *</label><input id="f-voidReason" placeholder="例：重複登録"></div>
+           <div class="btns"><button type="button" class="btn danger" data-act="void-do">取り消す</button><button type="button" class="btn" data-act="void-cancel">やめる</button></div></div>`
+           : `<button type="button" class="linkbtn" style="margin-left:0;color:var(--stamp)" data-act="void">この領収書を取り消す</button>`}
+      </form>
+      <section class="sec"><h2>変更履歴</h2><div class="history">${(r.history || []).slice().reverse().map(h => `<div><span class="num">${esc((h.at || "").replace("T", " ").slice(0, 16))}</span>　${esc(h.action)}${h.diff ? "：" + esc(h.diff) : ""}</div>`).join("")}</div></section>`;
+  }
+
+  const FIELD_LABEL = { issuedOn: "取引日", total: "合計", vendor: "取引先", tax10: "税10%", tax8: "税8%", regNo: "登録番号", payment: "支払", description: "但し書き", customerId: "顧客", projectId: "案件", category: "科目", memo: "メモ" };
+  function readForm() {
+    const g = id => document.getElementById("f-" + id)?.value ?? "";
+    const n = id => { const v = g(id).trim(); return v === "" ? null : Math.round(Number(v)); };
+    return { issuedOn: g("issuedOn"), total: n("total"), vendor: g("vendor").trim(), tax10: n("tax10"), tax8: n("tax8"),
+      regNo: g("regNo").trim().toUpperCase().replace(/[^T0-9]/g, ""), payment: g("payment"), description: g("description").trim(),
+      customerId: g("customerId"), projectId: g("projectId"), category: g("category"), memo: g("memo") };
+  }
+  async function saveReceipt(id, mode) {
+    const r = S.receipts.find(x => x.id === id); if (!r) return;
+    const f = readForm(); const msg = $("#form-msg");
+    if (f.projectId) { const p = proj(f.projectId); if (p) f.customerId = p.customerId; }
+    const errs = [];
+    if (mode !== "draft") {
+      if (!f.issuedOn) errs.push("issuedOn"); if (!f.vendor) errs.push("vendor"); if (f.total == null || f.total < 0) errs.push("total");
+    }
+    if (f.regNo && !/^T\d{13}$/.test(f.regNo)) errs.push("regNo");
+    document.querySelectorAll(".f.err").forEach(e => e.classList.remove("err"));
+    errs.forEach(k => document.getElementById("f-" + k)?.closest(".f")?.classList.add("err"));
+    if (errs.length) { msg.innerHTML = `<div class="notice err">${errs.map(k => FIELD_LABEL[k]).join("・")} を確認すること。${errs.includes("regNo") ? "登録番号は T と13桁の数字。" : ""}</div>`; return; }
+    const diff = Object.keys(f).filter(k => (r[k] ?? "") !== (f[k] ?? "")).map(k => {
+      const show = (key, v) => key === "customerId" ? custName(v) : key === "projectId" ? projName(v) : v;
+      return `${FIELD_LABEL[k]} ${show(k, r[k]) || "—"}→${show(k, f[k]) || "—"}`; }).join("、");
+    const now = new Date().toISOString();
+    const patch = { ...f };
+    let action = "下書き保存";
+    if (mode !== "draft") { if (r.status !== "confirmed") { patch.status = "confirmed"; patch.confirmedAt = now; action = "確定"; } else action = "修正"; }
+    if (!diff && action === "下書き保存") { toast("変更はない"); return; }
+    patch.history = [...(r.history || []), { at: now, by: S.me || "", action, diff: r.status === "confirmed" || action === "下書き保存" ? diff : "" }];
+    try {
+      await S.db.doc("receipts/" + id).update(patch);
+      ls.set("rl.last", { customerId: f.customerId, projectId: f.projectId });
+      toast(action === "確定" ? "確定した" : action === "修正" ? "修正を保存した" : "下書きを保存した");
+      if (mode === "next") {
+        const nxt = S.receipts.filter(x => x.id !== id && x.status === "needs_review").sort((a, b) => (a.createdAt || "").localeCompare(b.createdAt || ""))[0];
+        location.hash = nxt ? "r-" + nxt.id : "home";
+      } else { document.activeElement?.blur(); render(); }
+    } catch (e) { msg.innerHTML = `<div class="notice err">保存できなかった（${esc(e.code || "error")}）。編集権限があるか確認すること。</div>`; }
+  }
+
+  // ---- list ----
+  function filtered() {
+    const f = S.filters; const q = (f.q || "").trim().toLowerCase();
+    return S.receipts.filter(r =>
+      (!f.status || r.status === f.status) && (f.status || r.status !== "void") &&
+      (!f.customerId || r.customerId === f.customerId) && (!f.projectId || r.projectId === f.projectId) &&
+      (!f.from || (r.issuedOn || "") >= f.from) && (!f.to || (r.issuedOn || "") <= f.to) &&
+      (f.min == null || f.min === "" || (r.total || 0) >= Number(f.min)) && (f.max == null || f.max === "" || (r.total || 0) <= Number(f.max)) &&
+      (!q || [r.vendor, r.description, r.memo, r.regNo].some(x => (x || "").toLowerCase().includes(q)))
+    ).sort((a, b) => (b.issuedOn || b.createdAt || "").localeCompare(a.issuedOn || a.createdAt || ""));
+  }
+  function listView() {
+    const f = S.filters;
+    return `<section class="sec"><div class="sec-head"><h2>領収書一覧</h2><button class="linkbtn" id="clear-flt">条件をクリア</button></div>
+      <div class="card filters">
+        <div class="f wide"><label for="flt-q">取引先・品目・メモ</label><input id="flt-q" type="search" value="${esc(f.q || "")}" placeholder="例：タクシー"></div>
+        <div class="f"><label for="flt-from">取引日（から）</label><input id="flt-from" type="date" value="${esc(f.from || "")}"></div>
+        <div class="f"><label for="flt-to">取引日（まで）</label><input id="flt-to" type="date" value="${esc(f.to || "")}"></div>
+        <div class="f"><label for="flt-customerId">顧客</label><select id="flt-customerId"><option value="">すべて</option>${S.customers.map(c => `<option value="${c.id}" ${c.id === f.customerId ? "selected" : ""}>${esc(c.name)}</option>`).join("")}</select></div>
+        <div class="f"><label for="flt-projectId">案件</label><select id="flt-projectId"><option value="">すべて</option>${S.projects.filter(p => !f.customerId || p.customerId === f.customerId).map(p => `<option value="${p.id}" ${p.id === f.projectId ? "selected" : ""}>${esc(p.name)}</option>`).join("")}</select></div>
+        <div class="f"><label for="flt-min">金額（以上）</label><input id="flt-min" type="number" inputmode="numeric" value="${esc(f.min ?? "")}"></div>
+        <div class="f"><label for="flt-max">金額（以下）</label><input id="flt-max" type="number" inputmode="numeric" value="${esc(f.max ?? "")}"></div>
+        <div class="f wide"><label for="flt-status">ステータス</label><select id="flt-status"><option value="">取消以外すべて</option>${Object.entries(STATUS_LABEL).map(([k, v]) => `<option value="${k}" ${k === f.status ? "selected" : ""}>${v}</option>`).join("")}</select></div>
+      </div>
+      <div class="totalline"><span id="list-count" class="sub" style="color:var(--muted);font-size:13px"></span><button class="btn" id="csv-detail">明細をCSVで保存</button></div>
+      <div class="list" id="list-rows"></div></section>`;
+  }
+  function renderListRows() {
+    const rows = filtered(); const el = $("#list-rows"); if (!el) return;
+    el.innerHTML = rows.length ? rows.map(rowHtml).join("") : `<div class="empty">${S.receipts.length ? "条件に合う領収書はない。" : "まだ領収書がない。右下の「撮影」から登録できる。"}</div>`;
+    $("#list-count").textContent = `${rows.length}件　合計 ${yen(rows.reduce((s, r) => s + (r.total || 0), 0))}`;
+  }
+
+  // ---- summary ----
+  const AXES = { project: "案件別", customer: "顧客別", month: "月別", category: "科目別" };
+  function summaryRows() {
+    const p = S.period;
+    const rs = S.receipts.filter(r => r.status === "confirmed" && (!p.from || (r.issuedOn || "").slice(0, 7) >= p.from) && (!p.to || (r.issuedOn || "").slice(0, 7) <= p.to));
+    const key = r => S.axis === "project" ? r.projectId || "" : S.axis === "customer" ? r.customerId || "" : S.axis === "month" ? (r.issuedOn || "").slice(0, 7) : r.category || "";
+    const label = k => S.axis === "project" ? (k ? projName(k) + "（" + custName(proj(k)?.customerId) + "）" : "案件なし") : S.axis === "customer" ? (k ? custName(k) : "社内経費（顧客なし）") : S.axis === "month" ? (k ? k.replace("-", "年") + "月" : "日付なし") : (k || "科目未設定");
+    const m = new Map();
+    rs.forEach(r => { const k = key(r); const o = m.get(k) || { key: k, label: label(k), count: 0, total: 0, tax10: 0, tax8: 0 }; o.count++; o.total += r.total || 0; o.tax10 += r.tax10 || 0; o.tax8 += r.tax8 || 0; m.set(k, o); });
+    const out = [...m.values()]; out.sort((a, b) => S.axis === "month" ? b.key.localeCompare(a.key) : b.total - a.total);
+    return { rs, out };
+  }
+  function summaryView() {
+    const { rs, out } = summaryRows(); const max = Math.max(1, ...out.map(o => o.total)); const p = S.period;
+    const sum = rs.reduce((s, r) => s + (r.total || 0), 0);
+    return `<section class="sec"><h2>集計</h2>
+      <div class="seg" role="group" aria-label="集計の軸">${Object.entries(AXES).map(([k, v]) => `<button type="button" data-axis="${k}" aria-pressed="${S.axis === k}">${v}</button>`).join("")}</div>
+      <div class="card filters">
+        <div class="f"><label for="per-from">期間（から）</label><input type="month" id="per-from" value="${esc(p.from)}"></div>
+        <div class="f"><label for="per-to">期間（まで）</label><input type="month" id="per-to" value="${esc(p.to)}"></div>
+      </div>
+      <div class="card"><div class="totalline"><div><div style="font-size:12px;color:var(--muted)">確定済み合計（${rs.length}件）</div><div class="v num">${yen(sum)}</div></div>
+        <div style="font-size:12px;color:var(--muted);text-align:right">消費税10% <span class="num">${yen(rs.reduce((s, r) => s + (r.tax10 || 0), 0))}</span><br>消費税8% <span class="num">${yen(rs.reduce((s, r) => s + (r.tax8 || 0), 0))}</span></div></div></div>
+      <div class="list bars">${out.length ? out.map(o => `<button type="button" class="row" data-drill="${esc(o.key)}" style="width:100%;border-left:0;border-right:0;border-bottom:0;background:none;text-align:left">
+          <div style="min-width:0"><div class="t">${esc(o.label)}</div><div class="m">${o.count}件</div><div class="bar-track"><div class="bar" style="width:${(o.total / max * 100).toFixed(1)}%"></div></div></div>
+          <div class="amt"><span class="num">${yen(o.total)}</span></div></button>`).join("") : `<div class="empty">この期間に確定済みの領収書はない。領収書を確定すると、ここで案件別・顧客別に集計される。</div>`}</div>
+      <div class="btns"><button class="btn" id="csv-summary">集計をCSVで保存</button></div></section>`;
+  }
+
+  // ---- master ----
+  function masterView() {
+    const usage = id => S.receipts.filter(r => r.status !== "void" && (r.customerId === id || r.projectId === id)).length;
+    return `<section class="sec"><div class="sec-head"><h2>顧客</h2><span class="sub">${S.customers.length}件</span></div>
+      <form class="card" id="cust-form"><div class="grid2"><div class="f"><label for="c-name">顧客名 *</label><input id="c-name" placeholder="例：株式会社サンプル商事"></div>
+        <div class="f"><label for="c-code">顧客コード</label><input id="c-code" placeholder="例：C001"></div></div>
+        <div class="btns"><button class="btn primary" type="submit">顧客を追加</button></div></form>
+      <div class="list">${S.customers.length ? S.customers.slice().sort((a, b) => (a.code || a.name).localeCompare(b.code || b.name, "ja")).map(c => `<div class="row" style="grid-template-columns:minmax(0,1fr) auto"><div style="min-width:0"><div class="t">${esc(c.name)}</div><div class="m">${esc(c.code || "コードなし")} · 案件${S.projects.filter(p => p.customerId === c.id).length}件 · 領収書${usage(c.id)}件</div></div><span></span></div>`).join("")
+        : `<div class="empty">顧客がまだない。上のフォームから追加する。デモ用には<button class="linkbtn" style="margin:0" id="seed">サンプルの顧客・案件を入れる</button>。</div>`}</div></section>
+      <section class="sec"><div class="sec-head"><h2>案件</h2><span class="sub">${S.projects.length}件</span></div>
+      <form class="card" id="proj-form"><div class="f"><label for="p-customer">顧客 *</label><select id="p-customer"><option value="">選択する</option>${S.customers.map(c => `<option value="${c.id}">${esc(c.name)}</option>`).join("")}</select></div>
+        <div class="grid2"><div class="f"><label for="p-name">案件名 *</label><input id="p-name" placeholder="例：基幹システム更改"></div><div class="f"><label for="p-code">案件コード</label><input id="p-code" placeholder="例：P2026-001"></div></div>
+        <div class="btns"><button class="btn primary" type="submit">案件を追加</button></div></form>
+      <div class="list">${S.projects.length ? S.projects.slice().sort((a, b) => (a.code || a.name).localeCompare(b.code || b.name, "ja")).map(p => `<div class="row" style="grid-template-columns:minmax(0,1fr) auto"><div style="min-width:0"><div class="t">${esc(p.name)}</div><div class="m">${esc(custName(p.customerId))} · ${esc(p.code || "コードなし")} · 領収書${usage(p.id)}件</div></div>
+          <button type="button" class="pill ${p.status === "closed" ? "void" : "confirmed"}" style="border:0;min-height:32px;padding:4px 10px" data-toggle="${p.id}" aria-label="${esc(p.name)}の状態を切り替える">${p.status === "closed" ? "完了" : "進行中"}</button></div>`).join("")
+        : `<div class="empty">案件がまだない。顧客を選んで追加する。</div>`}</div></section>
+      <section class="sec"><h2>勘定科目</h2><div class="card" style="font-size:13px;color:var(--muted)">${CATEGORIES.join("・")}<br>（デモ版は固定。本実装でマスタ編集に対応する）</div></section>`;
+  }
+
+  // ---------- CSV ----------
+  async function saveCsv(name, rows) {
+    const body = "﻿" + rows.map(r => r.map(v => { const s = String(v ?? ""); return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; }).join(",")).join("\r\n");
+    if (!S.downloads) { toast("この表示ではファイル保存が使えない"); return; }
+    try { await S.downloads.save({ filename: name, data: new Blob([body], { type: "text/csv" }) }); toast("CSVを保存した"); }
+    catch (e) { if (e?.code !== "declined" && e?.code !== "cancelled") toast("CSVを保存できなかった"); }
+  }
+
+  // ---------- events ----------
+  function bind(v) {
+    if (v.name === "receipt") {
+      $("#back")?.addEventListener("click", () => { if (history.length > 1) history.back(); else location.hash = "home"; });
+      const ph = $("#photo"); ph?.addEventListener("click", () => { S.zoom = !S.zoom; ph.classList.toggle("zoom", S.zoom); });
+      const form = $("#rform"); if (!form) return;
+      form.addEventListener("submit", e => { e.preventDefault(); const r = S.receipts.find(x => x.id === v.id); saveReceipt(v.id, r?.status === "confirmed" ? "confirm" : "next"); });
+      $("#f-customerId")?.addEventListener("change", e => {
+        const ps = S.projects.filter(p => !e.target.value || p.customerId === e.target.value);
+        const sel = $("#f-projectId"); const cur = sel.value;
+        sel.innerHTML = `<option value="">（案件なし）</option>` + ps.filter(p => p.status !== "closed").map(p => `<option value="${p.id}" ${p.id === cur ? "selected" : ""}>${esc(p.name)}</option>`).join("");
+      });
+      $("#f-projectId")?.addEventListener("change", e => { const p = proj(e.target.value); if (p) $("#f-customerId").value = p.customerId; });
+      form.querySelectorAll("[data-act]").forEach(b => b.addEventListener("click", async e => {
+        const a = b.dataset.act;
+        if (a === "next" || a === "confirm" || a === "draft") { e.preventDefault(); saveReceipt(v.id, a); }
+        if (a === "void") { S.voiding = true; document.activeElement?.blur(); render(); }
+        if (a === "void-cancel") { S.voiding = false; document.activeElement?.blur(); render(); }
+        if (a === "void-do") {
+          const reason = $("#f-voidReason").value.trim(); if (!reason) { $("#f-voidReason").closest(".f").classList.add("err"); return; }
+          const r = S.receipts.find(x => x.id === v.id);
+          try { await S.db.doc("receipts/" + v.id).update({ status: "void", voidReason: reason, history: [...(r.history || []), { at: new Date().toISOString(), by: S.me || "", action: "取消", diff: reason }] });
+            S.voiding = false; toast("取り消した"); document.activeElement?.blur(); render(); } catch (err) { toast("取り消せなかった（" + (err.code || "error") + "）"); }
+        }
+      }));
+    }
+    if (v.name === "list") {
+      document.querySelectorAll("[id^='flt-']").forEach(el => el.addEventListener(el.tagName === "SELECT" ? "change" : "input", () => {
+        const k = el.id.slice(4); S.filters[k] = el.value;
+        if (k === "customerId") { S.filters.projectId = ""; ls.set("rl.filters", S.filters); el.blur(); render(); return; }
+        ls.set("rl.filters", S.filters); renderListRows();
+      }));
+      $("#clear-flt").addEventListener("click", () => { S.filters = {}; ls.set("rl.filters", {}); render(); });
+      $("#csv-detail").addEventListener("click", () => saveCsv(`領収書明細_${today()}.csv`, [
+        ["取引日", "取引先", "登録番号", "税込金額", "消費税10%", "消費税8%", "支払方法", "勘定科目", "顧客コード", "顧客名", "案件コード", "案件名", "但し書き", "メモ", "ステータス", "確定日時", "領収書ID"],
+        ...filtered().map(r => [r.issuedOn, r.vendor, r.regNo, r.total, r.tax10, r.tax8, r.payment, r.category, cust(r.customerId)?.code, custName(r.customerId), proj(r.projectId)?.code, projName(r.projectId), r.description, r.memo, STATUS_LABEL[r.status], r.confirmedAt, r.id])]));
+    }
+    if (v.name === "summary") {
+      document.querySelectorAll("[data-axis]").forEach(b => b.addEventListener("click", () => { S.axis = b.dataset.axis; ls.set("rl.axis", S.axis); render(); }));
+      ["from", "to"].forEach(k => $("#per-" + k).addEventListener("change", e => { S.period[k] = e.target.value; ls.set("rl.period", S.period); e.target.blur(); render(); }));
+      document.querySelectorAll("[data-drill]").forEach(b => b.addEventListener("click", () => {
+        const k = b.dataset.drill; const p = S.period; const f = { status: "confirmed" };
+        if (p.from) f.from = p.from + "-01"; if (p.to) f.to = p.to + "-31";
+        if (S.axis === "project") { if (k) { f.projectId = k; f.customerId = proj(k)?.customerId || ""; } }
+        else if (S.axis === "customer") { if (k) f.customerId = k; }
+        else if (S.axis === "month" && k) { f.from = k + "-01"; f.to = k + "-31"; }
+        else if (S.axis === "category") { f.q = ""; }
+        S.filters = f; ls.set("rl.filters", f); location.hash = "list";
+      }));
+      $("#csv-summary").addEventListener("click", () => { const { out } = summaryRows();
+        saveCsv(`領収書集計_${AXES[S.axis]}_${today()}.csv`, [[AXES[S.axis].replace("別", ""), "件数", "税込合計", "消費税10%", "消費税8%"], ...out.map(o => [o.label, o.count, o.total, o.tax10, o.tax8])]); });
+    }
+    if (v.name === "master") {
+      $("#cust-form").addEventListener("submit", async e => { e.preventDefault(); const name = $("#c-name").value.trim(); if (!name) { $("#c-name").closest(".f").classList.add("err"); return; }
+        try { await S.db.collection("customers").doc(newId("c")).set({ name, code: $("#c-code").value.trim(), createdAt: new Date().toISOString() }); document.activeElement?.blur(); toast("顧客を追加した"); render(); } catch (err) { toast("追加できなかった（" + (err.code || "error") + "）"); } });
+      $("#proj-form").addEventListener("submit", async e => { e.preventDefault(); const name = $("#p-name").value.trim(), customerId = $("#p-customer").value;
+        if (!name || !customerId) { if (!name) $("#p-name").closest(".f").classList.add("err"); if (!customerId) $("#p-customer").closest(".f").classList.add("err"); return; }
+        try { await S.db.collection("projects").doc(newId("p")).set({ name, customerId, code: $("#p-code").value.trim(), status: "active", createdAt: new Date().toISOString() }); document.activeElement?.blur(); toast("案件を追加した"); render(); } catch (err) { toast("追加できなかった（" + (err.code || "error") + "）"); } });
+      document.querySelectorAll("[data-toggle]").forEach(b => b.addEventListener("click", async () => { const p = proj(b.dataset.toggle); try { await S.db.doc("projects/" + p.id).update({ status: p.status === "closed" ? "active" : "closed" }); } catch (err) { toast("変更できなかった（" + (err.code || "error") + "）"); } }));
+      $("#seed")?.addEventListener("click", async () => {
+        const c1 = newId("c"), c2 = newId("c");
+        try {
+          await S.db.collection("customers").doc(c1).set({ name: "（サンプル）株式会社みなと物流", code: "C001", createdAt: new Date().toISOString() });
+          await S.db.collection("customers").doc(c2).set({ name: "（サンプル）北斗製薬株式会社", code: "C002", createdAt: new Date().toISOString() });
+          await S.db.collection("projects").doc(newId("p")).set({ name: "倉庫管理システム導入", customerId: c1, code: "P2026-001", status: "active", createdAt: new Date().toISOString() });
+          await S.db.collection("projects").doc(newId("p")).set({ name: "配送ルート最適化PoC", customerId: c1, code: "P2026-002", status: "active", createdAt: new Date().toISOString() });
+          await S.db.collection("projects").doc(newId("p")).set({ name: "治験データ基盤構築", customerId: c2, code: "P2026-003", status: "active", createdAt: new Date().toISOString() });
+          toast("サンプルの顧客・案件を入れた");
+        } catch (err) { toast("投入できなかった（" + (err.code || "error") + "）"); }
+      });
+    }
+  }
+
+  boot();
+})();
+</script>
