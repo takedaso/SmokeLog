@@ -127,7 +127,7 @@
 | ID | 画面 | 主な要素 |
 |---|---|---|
 | S01 | ログイン / サインアップ | SmokeLog の実装を流用 |
-| S02 | ホーム（要確認キュー） | 要確認件数、未確定一覧、今月の合計、撮影ボタン（FAB） |
+| S02 | ホーム（ダッシュボード） | 要確認件数・今月の確定額・累計額、要確認キュー、顧客別/案件別（上位5）・月別（直近6か月）の集計、撮影ボタン（FAB）。集計は取引日ベース・確定済みのみ |
 | S03 | 撮影 / アップロード | カメラ起動（`<input type="file" accept="image/*" capture="environment">`）、連続撮影、ギャラリー選択、PDF 選択 |
 | S04 | 確認・修正 | 上：画像（拡大/回転）、下：抽出項目フォーム。AI 信頼度が低い項目をハイライト。顧客→案件の連動選択、重複警告、「確定」「保存して次へ」 |
 | S05 | 領収書一覧 | フィルタ（期間、顧客、案件、科目、取引先、金額範囲、ステータス、登録者）、サムネイル付きリスト、一括で案件付け替え |
@@ -187,12 +187,17 @@ create table workspace_members (
 create table customers (
   id           uuid primary key default gen_random_uuid(),
   workspace_id uuid not null references workspaces(id) on delete cascade,
-  code         text,
+  code         text,                            -- 未指定時は連番を自動採番
   name         text not null,
+  name_norm    text generated always as (normalize_vendor(name)) stored,  -- 照合用の正規化名
+  invoice_reg_no text check (invoice_reg_no ~ '^T[0-9]{13}$'),          -- 照合キー（最優先）
+  source       text not null default 'manual',  -- manual / ocr（領収書の取引先から自動登録）
   archived_at  timestamptz,
   created_at   timestamptz not null default now(),
   unique (workspace_id, code)
 );
+create index on customers (workspace_id, name_norm);
+create index on customers (workspace_id, invoice_reg_no);
 
 -- 案件
 create type project_status as enum ('active', 'closed');
@@ -230,7 +235,8 @@ create table receipts (
 
   -- 証憑項目（電帳法の検索要件：日付・金額・取引先）
   issued_on          date,                       -- 取引日
-  vendor_name        text,                       -- 取引先（発行者）
+  vendor_name        text,                       -- 取引先（発行者、レシート記載のまま）
+  vendor_company     text,                       -- 店舗名を除いた会社・ブランド名（AI 抽出）
   invoice_reg_no     text check (invoice_reg_no ~ '^T[0-9]{13}$'),  -- 適格請求書発行事業者登録番号
   amount_total       numeric(14,0) check (amount_total >= 0),       -- 税込合計（円）
   amount_tax_10      numeric(14,0),              -- 10%対象の消費税額
@@ -377,7 +383,8 @@ API キーはサーバーの環境変数にのみ置き、クライアントに�
 ```json
 {
   "issued_on": "2026-10-15",
-  "vendor_name": "株式会社〇〇",
+  "vendor_name": "株式会社〇〇 新宿店",
+  "vendor_company": "株式会社〇〇",
   "invoice_reg_no": "T1234567890123",
   "amount_total": 3300,
   "amount_tax_10": 300,
@@ -394,7 +401,23 @@ API キーはサーバーの環境変数にのみ置き、クライアントに�
 - 和暦（令和）表記は西暦に変換して返すようプロンプトで指示する。
 - 科目・案件の推定は、同じ取引先の過去の確定データ（直近の科目・案件）を優先し、なければ AI の `category_guess` を採用する（ベンチマーク B5 の簡易版）。
 
-### 8.3 重複検知
+### 8.3 取引先 → 顧客マスタの自動登録
+
+AI が読み取った取引先を顧客マスタと照合し、該当がなければ新規顧客として登録して領収書に紐付ける。
+
+1. **抽出**：AI は `vendor`（記載のまま、例「mont-bell 二子玉川店」）と `vendor_company`（店舗名を除いた名称、例「mont-bell」）を返す。`vendor_company` が空の場合は末尾の「〇〇店/支店/営業所」を除去して代用する。
+2. **照合**（上から順に評価し、最初に一致した顧客を採用）
+   1. 登録番号（T+13桁）の完全一致
+   2. 正規化名の一致（NFKC、小文字化、空白・記号・「株式会社」「(株)」等の法人格を除去）
+   3. 正規化名の部分一致（どちらかが 3 文字以上で、一方が他方を含む）
+3. **確認画面**：一致した顧客は顧客欄に初期表示（「推定」表示付き）。一致しない場合は「取引先を顧客マスタに登録して紐付ける」（初期値 ON、顧客名は編集可）を表示する。
+4. **確定時**：ON のまま確定すると `customers` に `source = 'ocr'`、登録番号付きで登録し、顧客コードは連番で自動採番する。
+5. **正規化関数**：`normalize_vendor(text)` を immutable な SQL 関数として定義し、`customers.name_norm` の生成列とアプリ側で同じ規則を使う。
+6. **既存データ**：顧客未設定の領収書を対象に、同じ照合ロジックで一括登録・紐付けする機能をマスタ画面に置く。
+
+> 照合はアプリ層で行い、確定処理（顧客登録＋領収書更新）は 1 トランザクションの RPC（`confirm_receipt`）として実装する。誤登録した顧客は、統合機能（v2）で既存顧客へまとめられるようにする。
+
+### 8.4 重複検知
 
 | 判定 | 条件 | 対応 |
 |---|---|---|
@@ -492,3 +515,9 @@ API キーはサーバーの環境変数にのみ置き、クライアントに�
 - 撮影 → AI 読取 → 確認・修正 → 確定、要確認キュー、一覧検索、案件別・顧客別・月別・科目別の集計、CSV 保存、顧客・案件マスタ、重複警告、変更履歴に対応
 - 保存先は Artifact の共有データベース（上限 2.5 万件）のため、本番規模の運用には使えない
 - 勘定科目マスタは固定、権限ロールは未実装
+
+### 改修履歴
+
+| 日付 | 内容 |
+|---|---|
+| 2026-11-02 | ホームに顧客別・案件別・月別の集計と累計額を追加（取引日が当月以外の領収書が集計に出なかった問題への対応）。取引先から顧客マスタへの自動登録（8.3）と一括登録を追加。変更のない修正保存を履歴に残さないよう修正 |

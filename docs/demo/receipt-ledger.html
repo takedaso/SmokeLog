@@ -124,6 +124,17 @@ h2 { font-size: 15px; margin: 0; font-weight: 700; text-wrap: balance; }
 
 .toast { position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(var(--tab-h) + 80px + env(safe-area-inset-bottom, 0px)); z-index: 9;
   background: var(--fg); color: var(--bg); padding: 10px 16px; border-radius: 8px; font-size: 14px; max-width: calc(100% - 32px); }
+.newcust { display: flex; flex-direction: column; gap: 8px; border: 1px dashed var(--accent); border-radius: 6px; padding: 10px; background: var(--accent-weak); }
+.chk { display: flex; gap: 8px; align-items: center; font-size: 14px; font-weight: 500; color: var(--accent); }
+.chk input { width: 20px; height: 20px; accent-color: var(--accent); }
+.dash { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; }
+.dash .list { min-width: 0; }
+.dash h3 { font-size: 13px; margin: 0; padding: 10px 12px 0; color: var(--muted); font-weight: 700; letter-spacing: .03em; }
+.barbtn { width: 100%; border: 0; border-top: 1px solid var(--line); background: none; text-align: left; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; align-items: center; padding: 8px 12px; }
+.barbtn:first-of-type { border-top: 0; }
+.barbtn:hover { background: var(--accent-weak); }
+.barbtn .t { font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.src { font-size: 10px; padding: 0 6px; border-radius: 999px; background: var(--accent-weak); color: var(--accent); margin-left: 6px; vertical-align: 1px; }
 .inline-confirm { display: flex; flex-direction: column; gap: 8px; border: 1px dashed var(--stamp); border-radius: 6px; padding: 10px; }
 @media (prefers-reduced-motion: no-preference) { .row, .btn { transition: background .15s; } }
 </style>
@@ -180,6 +191,20 @@ h2 { font-size: 15px; margin: 0; font-weight: 700; text-wrap: balance; }
   const proj = id => S.projects.find(p => p.id === id);
   const custName = id => cust(id)?.name || "";
   const projName = id => proj(id)?.name || "";
+  // 取引先 → 顧客マスタの照合
+  const norm = s => String(s || "").normalize("NFKC").toLowerCase().replace(/株式会社|有限会社|合同会社|\(株\)|\(有\)|[\s・,.\-_]/g, "");
+  const stripBranch = s => (String(s || "").replace(/\s*\S*(店|支店|営業所|本店|出張所)$/, "").trim() || String(s || "").trim());
+  const vendorAsCustomer = r => (r.vendorCompany || stripBranch(r.vendor) || "").trim();
+  function matchCustomer(name, regNo) {
+    if (regNo) { const c = S.customers.find(c => c.regNo && c.regNo === regNo); if (c) return c; }
+    const n = norm(name); if (!n) return null;
+    return S.customers.find(c => { const m = norm(c.name); return m && (n === m || (m.length >= 3 && n.includes(m)) || (n.length >= 3 && m.includes(n))); }) || null;
+  }
+  function nextCustomerCode() { const max = S.customers.reduce((mx, c) => Math.max(mx, parseInt(String(c.code || "").replace(/\D/g, ""), 10) || 0), 0); return String(max + 1).padStart(3, "0"); }
+  async function createCustomer(name, regNo) {
+    const id = newId("c"); const doc = { name, code: nextCustomerCode(), regNo: regNo || "", source: "AI読取", createdAt: new Date().toISOString() };
+    await S.db.collection("customers").doc(id).set(doc); S.customers = [...S.customers, { id, ...doc }]; return id;
+  }
 
   // ---------- boot ----------
   async function boot() {
@@ -230,7 +255,7 @@ h2 { font-size: 15px; margin: 0; font-weight: 700; text-wrap: balance; }
         const last = ls.get("rl.last", {});
         const doc = { status: S.aiOk ? "processing" : "needs_review", sha256: hash, assetId, thumb,
           issuedOn: "", vendor: "", regNo: "", total: null, tax10: null, tax8: null, payment: "", description: "",
-          category: "", customerId: last.customerId || "", projectId: last.projectId || "", memo: "",
+          category: "", customerId: S.aiOk ? "" : (last.customerId || ""), projectId: S.aiOk ? "" : (last.projectId || ""), memo: "", vendorCompany: "",
           createdBy: S.me || "", createdAt: new Date().toISOString(), confirmedAt: "", voidReason: "",
           confidence: {}, ocrError: "", history: [{ at: new Date().toISOString(), by: S.me || "", action: "登録" }] };
         await S.db.collection("receipts").doc(id).set(doc);
@@ -249,7 +274,8 @@ h2 { font-size: 15px; margin: 0; font-weight: 700; text-wrap: balance; }
 次のキーを持つJSONオブジェクトだけを返すこと。読み取れない項目は null とする。
 - is_receipt: 領収書/レシートなら true
 - issued_on: 取引日 "YYYY-MM-DD"（和暦は西暦に変換。令和n年 = 2018+n年）
-- vendor: 発行者（店名・会社名）
+- vendor: 発行者（店名・会社名。レシート記載のまま）
+- vendor_company: 発行者の会社名・ブランド名（「〇〇店」「〇〇支店」等の店舗名を除いたもの）
 - reg_no: 適格請求書発行事業者登録番号 "T"+13桁（ハイフン・空白は除く）
 - total: 税込合計金額（整数、円）
 - tax10: 10%対象の消費税額（整数）。内税表記の場合も税額を記載
@@ -263,13 +289,14 @@ h2 { font-size: 15px; margin: 0; font-weight: 700; text-wrap: balance; }
       const cur = (await S.db.doc("receipts/" + id).get()).data() || {};
       const toInt = v => (v == null || v === "" || isNaN(Number(v))) ? null : Math.round(Number(v));
       const patch = { status: "needs_review", issuedOn: /^\d{4}-\d{2}-\d{2}$/.test(r?.issued_on || "") ? r.issued_on : "",
-        vendor: r?.vendor || "", regNo: (r?.reg_no || "").replace(/[^T0-9]/g, ""), total: toInt(r?.total), tax10: toInt(r?.tax10), tax8: toInt(r?.tax8),
+        vendor: r?.vendor || "", vendorCompany: r?.vendor_company || "", regNo: (r?.reg_no || "").replace(/[^T0-9]/g, ""), total: toInt(r?.total), tax10: toInt(r?.tax10), tax8: toInt(r?.tax8),
         payment: PAYMENTS.includes(r?.payment) ? r.payment : "", description: r?.description || "",
         category: CATEGORIES.includes(r?.category) ? r.category : "", confidence: r?.confidence || {},
         ocrError: r?.is_receipt === false ? "領収書ではない可能性がある" : "" };
       // 取引先の過去実績から科目・案件を推定（同じ取引先の直近確定分）
       const prev = S.receipts.filter(x => x.status === "confirmed" && x.vendor && patch.vendor && x.vendor === patch.vendor).sort((a, b) => (b.confirmedAt || "").localeCompare(a.confirmedAt || ""))[0];
       if (prev) { patch.category = prev.category || patch.category; if (!cur.projectId && prev.projectId) { patch.projectId = prev.projectId; patch.customerId = prev.customerId; } }
+      if (!patch.customerId && !cur.customerId) { const c = matchCustomer(patch.vendorCompany || stripBranch(patch.vendor), patch.regNo); if (c) patch.customerId = c.id; }
       patch.history = [...(cur.history || []), { at: new Date().toISOString(), by: "", action: "AI読取完了" }];
       await S.db.doc("receipts/" + id).update(patch);
     } catch (e) {
@@ -301,23 +328,45 @@ h2 { font-size: 15px; margin: 0; font-weight: 700; text-wrap: balance; }
       <div class="amt"><span class="num">${yen(r.total)}</span><span class="pill ${r.status}">${STATUS_LABEL[r.status]}</span></div></a>`;
   }
 
+  function topGroups(rs, keyFn, labelFn, n) {
+    const m = new Map(); rs.forEach(r => { const k = keyFn(r); const o = m.get(k) || { key: k, label: labelFn(k), count: 0, total: 0 }; o.count++; o.total += r.total || 0; m.set(k, o); });
+    return [...m.values()].sort((a, b) => b.total - a.total).slice(0, n);
+  }
+  function barList(rows, axis, empty) {
+    if (!rows.length) return `<div class="empty">${empty}</div>`;
+    const max = Math.max(1, ...rows.map(o => o.total));
+    return rows.map(o => `<button type="button" class="barbtn" data-goaxis="${axis}"><div style="min-width:0"><div class="t">${esc(o.label)}</div><div class="bar-track"><div class="bar" style="width:${(o.total / max * 100).toFixed(1)}%"></div></div></div><div class="amt"><span class="num">${yen(o.total)}</span><span class="m" style="font-size:11px;color:var(--muted)">${o.count}件</span></div></button>`).join("");
+  }
   function homeView() {
     if (S.offline) return `<div class="notice err">保存先（共有データベース）に接続できない。claude.ai にサインインした状態で開くと利用できる。</div>`;
     const pending = S.receipts.filter(r => r.status === "needs_review" || r.status === "processing").sort((a, b) => (b.createdAt || "").localeCompare(a.createdAt || ""));
+    const conf = S.receipts.filter(r => r.status === "confirmed");
+    const sum = a => a.reduce((s, r) => s + (r.total || 0), 0);
     const ym = today().slice(0, 7);
-    const monthConf = S.receipts.filter(r => r.status === "confirmed" && (r.issuedOn || "").startsWith(ym));
-    const recent = S.receipts.filter(r => r.status === "confirmed").sort((a, b) => (b.confirmedAt || "").localeCompare(a.confirmedAt || "")).slice(0, 5);
-    const noMaster = S.loaded.c && S.customers.length === 0;
+    const monthConf = conf.filter(r => (r.issuedOn || "").startsWith(ym));
+    const months = []; { const d = new Date(); d.setDate(1); for (let i = 0; i < 6; i++) { months.push(d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0")); d.setMonth(d.getMonth() - 1); } }
+    const monthRows = months.map(m => { const rs = conf.filter(r => (r.issuedOn || "").startsWith(m)); return { key: m, label: m.replace("-", "年") + "月", count: rs.length, total: sum(rs) }; });
+    const byCust = topGroups(conf, r => r.customerId || "", k => k ? custName(k) : "顧客未設定", 5);
+    const byProj = topGroups(conf, r => r.projectId || "", k => k ? projName(k) + "（" + custName(proj(k)?.customerId) + "）" : "案件未設定", 5);
+    const recent = conf.slice().sort((a, b) => (b.confirmedAt || "").localeCompare(a.confirmedAt || "")).slice(0, 5);
+    const unlinked = S.receipts.filter(r => r.status === "confirmed" && !r.customerId && vendorAsCustomer(r)).length;
+    const noData = `確定済みの領収書がまだない。`;
     return `
       <div class="stats">
         <div class="stat ${pending.length ? "alert" : ""}"><div class="k">要確認</div><div class="v num">${pending.length}</div></div>
-        <div class="stat"><div class="k">今月の確定件数</div><div class="v num">${monthConf.length}</div></div>
-        <div class="stat"><div class="k">今月の確定額</div><div class="v num">${yen(monthConf.reduce((s, r) => s + (r.total || 0), 0))}</div></div>
+        <div class="stat"><div class="k">今月の確定額</div><div class="v num">${yen(sum(monthConf))}</div></div>
+        <div class="stat"><div class="k">累計（${conf.length}件）</div><div class="v num">${yen(sum(conf))}</div></div>
       </div>
-      ${noMaster ? `<div class="notice info">顧客・案件がまだない。<a href="#master">マスタ</a>で登録すると、領収書を案件に振り分けられる。</div>` : ""}
+      ${unlinked ? `<div class="notice info">顧客が未設定の確定済み領収書が${unlinked}件ある。<a href="#master">マスタ</a>で取引先から顧客を一括登録できる。</div>` : ""}
       ${!S.aiOk && S.loaded.r ? `<div class="notice warn">この表示ではAI読取が使えないため、撮影後に項目を手入力する。</div>` : ""}
       <section class="sec"><div class="sec-head"><h2>要確認キュー</h2><span class="sub">撮影済み・未確定</span></div>
         <div class="list">${pending.length ? pending.map(rowHtml).join("") : `<div class="empty">${S.loaded.r ? "未確認の領収書はない。右下の「撮影」で領収書を撮ると、AIが日付・取引先・金額を読み取ってここに並ぶ。" : "読み込み中…"}</div>`}</div></section>
+      <section class="sec"><div class="sec-head"><h2>集計</h2><span class="sub">確定済み・取引日ベース</span><a href="#summary">詳しく見る</a></div>
+        <div class="dash">
+          <div class="list"><h3>顧客別（上位5）</h3>${barList(byCust, "customer", noData)}</div>
+          <div class="list"><h3>案件別（上位5）</h3>${barList(byProj, "project", noData)}</div>
+          <div class="list"><h3>月別（直近6か月）</h3>${barList(monthRows, "month", noData)}</div>
+        </div></section>
       <section class="sec"><div class="sec-head"><h2>最近確定した領収書</h2><a href="#list">すべて見る</a></div>
         <div class="list">${recent.length ? recent.map(rowHtml).join("") : `<div class="empty">確定済みの領収書はまだない。</div>`}</div></section>`;
   }
@@ -330,10 +379,14 @@ h2 { font-size: 15px; margin: 0; font-weight: 700; text-wrap: balance; }
     const low = k => conf[k] != null && conf[k] < 0.8 ? " low" : "";
     const lowHint = k => conf[k] != null && conf[k] < 0.8 ? `<span class="hint">読取の確度が低い。画像と照合すること</span>` : "";
     const dup = S.receipts.find(x => x.id !== r.id && x.status !== "void" && r.issuedOn && r.total != null && x.issuedOn === r.issuedOn && x.total === r.total);
-    const projOpts = S.projects.filter(p => !r.customerId || p.customerId === r.customerId);
-    const u = imgUrl(r);
     const ro = r.status === "void";
-    return `
+    const candName = vendorAsCustomer(r);
+    const sugg = !r.customerId && r.status !== "void" ? matchCustomer(candName, r.regNo) : null;
+    const selCust = r.customerId || sugg?.id || "";
+    const showNew = !ro && !selCust && !!candName;
+    const projOpts = S.projects.filter(p => !selCust || p.customerId === selCust);
+    const u = imgUrl(r);
+        return `
       <div class="sec-head"><button type="button" id="back" class="linkbtn" style="margin-left:0">← 戻る</button><span class="pill ${r.status}" style="margin-left:auto">${STATUS_LABEL[r.status]}</span></div>
       <div class="photo ${S.zoom ? "zoom" : ""}" id="photo">${u ? `<img src="${u}" alt="領収書の画像">` : `<div class="none">画像なし</div>`}</div>
       ${r.status === "processing" ? `<div class="notice info">AIが読み取り中。数秒で項目が入る。</div>` : ""}
@@ -356,9 +409,12 @@ h2 { font-size: 15px; margin: 0; font-weight: 700; text-wrap: balance; }
         </div>
         <div class="f"><label for="f-description">但し書き・品目</label><input id="f-description" value="${esc(r.description)}" ${ro ? "disabled" : ""}></div>
         <div class="grid2">
-          <div class="f"><label for="f-customerId">顧客</label><select id="f-customerId" ${ro ? "disabled" : ""}><option value="">（社内経費）</option>${S.customers.filter(c => !c.archived || c.id === r.customerId).map(c => `<option value="${c.id}" ${c.id === r.customerId ? "selected" : ""}>${esc(c.name)}</option>`).join("")}</select></div>
-          <div class="f"><label for="f-projectId">案件</label><select id="f-projectId" ${ro ? "disabled" : ""}><option value="">（案件なし）</option>${projOpts.filter(p => p.status !== "closed" || p.id === r.projectId).map(p => `<option value="${p.id}" ${p.id === r.projectId ? "selected" : ""}>${esc(p.name)}${r.customerId ? "" : "（" + esc(custName(p.customerId)) + "）"}</option>`).join("")}</select></div>
+          <div class="f"><label for="f-customerId">顧客</label><select id="f-customerId" ${ro ? "disabled" : ""}><option value="">（社内経費）</option>${S.customers.filter(c => !c.archived || c.id === r.customerId).map(c => `<option value="${c.id}" ${c.id === selCust ? "selected" : ""}>${esc(c.name)}</option>`).join("")}</select>${sugg ? `<span class="hint" style="color:var(--accent)">取引先名から顧客を推定した</span>` : ""}</div>
+          <div class="f"><label for="f-projectId">案件</label><select id="f-projectId" ${ro ? "disabled" : ""}><option value="">（案件なし）</option>${projOpts.filter(p => p.status !== "closed" || p.id === r.projectId).map(p => `<option value="${p.id}" ${p.id === r.projectId ? "selected" : ""}>${esc(p.name)}${selCust ? "" : "（" + esc(custName(p.customerId)) + "）"}</option>`).join("")}</select></div>
         </div>
+        ${ro ? "" : `<div class="newcust" id="newcust" data-cand="${esc(candName)}" ${showNew ? "" : "hidden"}>
+          <label class="chk" for="f-autoCust"><input type="checkbox" id="f-autoCust" ${showNew ? "checked" : ""}>取引先を顧客マスタに登録して紐付ける</label>
+          <div class="f"><label for="f-newCustName">登録する顧客名（確定時に登録）</label><input id="f-newCustName" value="${esc(candName)}"></div></div>`}
         <div class="f"><label for="f-category">勘定科目</label><select id="f-category" ${ro ? "disabled" : ""}><option value="">—</option>${CATEGORIES.map(c => `<option ${c === r.category ? "selected" : ""}>${c}</option>`).join("")}</select></div>
         <div class="f"><label for="f-memo">メモ</label><textarea id="f-memo" ${ro ? "disabled" : ""}>${esc(r.memo)}</textarea></div>
         <div id="form-msg"></div>
@@ -393,6 +449,15 @@ h2 { font-size: 15px; margin: 0; font-weight: 700; text-wrap: balance; }
     document.querySelectorAll(".f.err").forEach(e => e.classList.remove("err"));
     errs.forEach(k => document.getElementById("f-" + k)?.closest(".f")?.classList.add("err"));
     if (errs.length) { msg.innerHTML = `<div class="notice err">${errs.map(k => FIELD_LABEL[k]).join("・")} を確認すること。${errs.includes("regNo") ? "登録番号は T と13桁の数字。" : ""}</div>`; return; }
+    let newCust = "";
+    if (mode !== "draft" && !f.customerId && document.getElementById("f-autoCust")?.checked) {
+      const nm = (document.getElementById("f-newCustName")?.value || "").trim();
+      if (nm) {
+        const ex = matchCustomer(nm, f.regNo);
+        try { f.customerId = ex ? ex.id : await createCustomer(nm, f.regNo); if (!ex) newCust = nm; }
+        catch (e) { msg.innerHTML = `<div class="notice err">顧客を登録できなかった（${esc(e.code || "error")}）。</div>`; return; }
+      }
+    }
     const diff = Object.keys(f).filter(k => (r[k] ?? "") !== (f[k] ?? "")).map(k => {
       const show = (key, v) => key === "customerId" ? custName(v) : key === "projectId" ? projName(v) : v;
       return `${FIELD_LABEL[k]} ${show(k, r[k]) || "—"}→${show(k, f[k]) || "—"}`; }).join("、");
@@ -400,12 +465,12 @@ h2 { font-size: 15px; margin: 0; font-weight: 700; text-wrap: balance; }
     const patch = { ...f };
     let action = "下書き保存";
     if (mode !== "draft") { if (r.status !== "confirmed") { patch.status = "confirmed"; patch.confirmedAt = now; action = "確定"; } else action = "修正"; }
-    if (!diff && action === "下書き保存") { toast("変更はない"); return; }
+    if (!diff && action !== "確定") { toast("変更はない"); return; }
     patch.history = [...(r.history || []), { at: now, by: S.me || "", action, diff: r.status === "confirmed" || action === "下書き保存" ? diff : "" }];
     try {
       await S.db.doc("receipts/" + id).update(patch);
       ls.set("rl.last", { customerId: f.customerId, projectId: f.projectId });
-      toast(action === "確定" ? "確定した" : action === "修正" ? "修正を保存した" : "下書きを保存した");
+      toast(newCust ? `確定し、顧客「${newCust}」をマスタに登録した` : action === "確定" ? "確定した" : action === "修正" ? "修正を保存した" : "下書きを保存した");
       if (mode === "next") {
         const nxt = S.receipts.filter(x => x.id !== id && x.status === "needs_review").sort((a, b) => (a.createdAt || "").localeCompare(b.createdAt || ""))[0];
         location.hash = nxt ? "r-" + nxt.id : "home";
@@ -478,11 +543,15 @@ h2 { font-size: 15px; margin: 0; font-weight: 700; text-wrap: balance; }
   // ---- master ----
   function masterView() {
     const usage = id => S.receipts.filter(r => r.status !== "void" && (r.customerId === id || r.projectId === id)).length;
-    return `<section class="sec"><div class="sec-head"><h2>顧客</h2><span class="sub">${S.customers.length}件</span></div>
+    const unl = S.receipts.filter(r => (r.status === "confirmed" || r.status === "needs_review") && !r.customerId && vendorAsCustomer(r));
+    return `${unl.length ? `<div class="card"><div style="font-size:14px">顧客が未設定の領収書が<b class="num">${unl.length}</b>件ある。取引先名で顧客マスタを照合し、ない取引先は新しい顧客として登録して紐付ける。</div>
+        <div style="font-size:12px;color:var(--muted)">${esc([...new Set(unl.map(vendorAsCustomer))].slice(0, 8).join("、"))}</div>
+        <div class="btns"><button class="btn primary" type="button" id="bulk-cust">取引先を顧客マスタに一括登録</button></div></div>` : ""}
+      <section class="sec"><div class="sec-head"><h2>顧客</h2><span class="sub">${S.customers.length}件</span></div>
       <form class="card" id="cust-form"><div class="grid2"><div class="f"><label for="c-name">顧客名 *</label><input id="c-name" placeholder="例：株式会社サンプル商事"></div>
         <div class="f"><label for="c-code">顧客コード</label><input id="c-code" placeholder="例：C001"></div></div>
         <div class="btns"><button class="btn primary" type="submit">顧客を追加</button></div></form>
-      <div class="list">${S.customers.length ? S.customers.slice().sort((a, b) => (a.code || a.name).localeCompare(b.code || b.name, "ja")).map(c => `<div class="row" style="grid-template-columns:minmax(0,1fr) auto"><div style="min-width:0"><div class="t">${esc(c.name)}</div><div class="m">${esc(c.code || "コードなし")} · 案件${S.projects.filter(p => p.customerId === c.id).length}件 · 領収書${usage(c.id)}件</div></div><span></span></div>`).join("")
+      <div class="list">${S.customers.length ? S.customers.slice().sort((a, b) => (a.code || a.name).localeCompare(b.code || b.name, "ja")).map(c => `<div class="row" style="grid-template-columns:minmax(0,1fr) auto"><div style="min-width:0"><div class="t">${esc(c.name)}${c.source ? `<span class="src">${esc(c.source)}</span>` : ""}</div><div class="m">${esc(c.code || "コードなし")}${c.regNo ? " · " + esc(c.regNo) : ""} · 案件${S.projects.filter(p => p.customerId === c.id).length}件 · 領収書${usage(c.id)}件</div></div><span></span></div>`).join("")
         : `<div class="empty">顧客がまだない。上のフォームから追加する。デモ用には<button class="linkbtn" style="margin:0" id="seed">サンプルの顧客・案件を入れる</button>。</div>`}</div></section>
       <section class="sec"><div class="sec-head"><h2>案件</h2><span class="sub">${S.projects.length}件</span></div>
       <form class="card" id="proj-form"><div class="f"><label for="p-customer">顧客 *</label><select id="p-customer"><option value="">選択する</option>${S.customers.map(c => `<option value="${c.id}">${esc(c.name)}</option>`).join("")}</select></div>
@@ -510,11 +579,12 @@ h2 { font-size: 15px; margin: 0; font-weight: 700; text-wrap: balance; }
       const form = $("#rform"); if (!form) return;
       form.addEventListener("submit", e => { e.preventDefault(); const r = S.receipts.find(x => x.id === v.id); saveReceipt(v.id, r?.status === "confirmed" ? "confirm" : "next"); });
       $("#f-customerId")?.addEventListener("change", e => {
+        const nb = $("#newcust"); if (nb) { const show = !e.target.value && !!nb.dataset.cand; nb.hidden = !show; $("#f-autoCust").checked = show; }
         const ps = S.projects.filter(p => !e.target.value || p.customerId === e.target.value);
         const sel = $("#f-projectId"); const cur = sel.value;
         sel.innerHTML = `<option value="">（案件なし）</option>` + ps.filter(p => p.status !== "closed").map(p => `<option value="${p.id}" ${p.id === cur ? "selected" : ""}>${esc(p.name)}</option>`).join("");
       });
-      $("#f-projectId")?.addEventListener("change", e => { const p = proj(e.target.value); if (p) $("#f-customerId").value = p.customerId; });
+      $("#f-projectId")?.addEventListener("change", e => { const p = proj(e.target.value); if (p) { $("#f-customerId").value = p.customerId; const nb = $("#newcust"); if (nb) { nb.hidden = true; $("#f-autoCust").checked = false; } } });
       form.querySelectorAll("[data-act]").forEach(b => b.addEventListener("click", async e => {
         const a = b.dataset.act;
         if (a === "next" || a === "confirm" || a === "draft") { e.preventDefault(); saveReceipt(v.id, a); }
@@ -527,6 +597,9 @@ h2 { font-size: 15px; margin: 0; font-weight: 700; text-wrap: balance; }
             S.voiding = false; toast("取り消した"); document.activeElement?.blur(); render(); } catch (err) { toast("取り消せなかった（" + (err.code || "error") + "）"); }
         }
       }));
+    }
+    if (v.name === "home") {
+      document.querySelectorAll("[data-goaxis]").forEach(b => b.addEventListener("click", () => { S.axis = b.dataset.goaxis; ls.set("rl.axis", S.axis); if (S.axis === "month") { S.period = { from: "", to: "" }; ls.set("rl.period", S.period); } location.hash = "summary"; }));
     }
     if (v.name === "list") {
       document.querySelectorAll("[id^='flt-']").forEach(el => el.addEventListener(el.tagName === "SELECT" ? "change" : "input", () => {
@@ -561,6 +634,22 @@ h2 { font-size: 15px; margin: 0; font-weight: 700; text-wrap: balance; }
         if (!name || !customerId) { if (!name) $("#p-name").closest(".f").classList.add("err"); if (!customerId) $("#p-customer").closest(".f").classList.add("err"); return; }
         try { await S.db.collection("projects").doc(newId("p")).set({ name, customerId, code: $("#p-code").value.trim(), status: "active", createdAt: new Date().toISOString() }); document.activeElement?.blur(); toast("案件を追加した"); render(); } catch (err) { toast("追加できなかった（" + (err.code || "error") + "）"); } });
       document.querySelectorAll("[data-toggle]").forEach(b => b.addEventListener("click", async () => { const p = proj(b.dataset.toggle); try { await S.db.doc("projects/" + p.id).update({ status: p.status === "closed" ? "active" : "closed" }); } catch (err) { toast("変更できなかった（" + (err.code || "error") + "）"); } }));
+      $("#bulk-cust")?.addEventListener("click", async e => {
+        const btn = e.currentTarget; btn.disabled = true; btn.textContent = "登録中…";
+        const targets = S.receipts.filter(r => (r.status === "confirmed" || r.status === "needs_review") && !r.customerId && vendorAsCustomer(r));
+        let created = 0, linked = 0;
+        try {
+          for (const r of targets) {
+            const nm = vendorAsCustomer(r); const ex = matchCustomer(nm, r.regNo);
+            const cid = ex ? ex.id : await createCustomer(nm, r.regNo); if (!ex) created++;
+            const cur = (await S.db.doc("receipts/" + r.id).get()).data() || r;
+            await S.db.doc("receipts/" + r.id).update({ customerId: cid, history: [...(cur.history || []), { at: new Date().toISOString(), by: S.me || "", action: "顧客を紐付け", diff: "顧客 —→" + (ex ? ex.name : nm) }] });
+            linked++;
+          }
+          toast(`顧客を${created}件登録し、領収書${linked}件に紐付けた`);
+        } catch (err) { toast("一括登録が途中で止まった（" + (err.code || "error") + "）"); }
+        document.activeElement?.blur(); render();
+      });
       $("#seed")?.addEventListener("click", async () => {
         const c1 = newId("c"), c2 = newId("c");
         try {
