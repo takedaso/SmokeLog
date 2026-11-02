@@ -47,7 +47,7 @@ h2 { font-size: 15px; margin: 0; font-weight: 700; text-wrap: balance; }
 .stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
 .stat { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; min-width: 0; }
 .stat .k { font-size: 11px; color: var(--muted); letter-spacing: .04em; }
-.stat .v { font-size: 20px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.stat .v { font-size: clamp(14px, 4.2vw, 20px); font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .stat.alert .v { color: var(--stamp); }
 
 .list { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
@@ -135,6 +135,25 @@ h2 { font-size: 15px; margin: 0; font-weight: 700; text-wrap: balance; }
 .barbtn:hover { background: var(--accent-weak); }
 .barbtn .t { font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .src { font-size: 10px; padding: 0 6px; border-radius: 999px; background: var(--accent-weak); color: var(--accent); margin-left: 6px; vertical-align: 1px; }
+[hidden] { display: none !important; }
+.barbtn .amt { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; }
+.thumb.noimg { display: grid; place-items: center; font-size: 10px; color: var(--muted); letter-spacing: .1em; }
+.checks { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.ck { font-size: 13px; padding: 8px 10px 8px 30px; border-radius: 6px; position: relative; line-height: 1.5; }
+.ck::before { position: absolute; left: 10px; top: 8px; font-weight: 700; }
+.ck.info { background: var(--accent-weak); color: var(--accent); } .ck.info::before { content: "i"; }
+.ck.ok { background: var(--ok-weak); color: var(--ok); } .ck.ok::before { content: "✓"; }
+.ck.warn { background: var(--warn-weak); color: var(--warn); } .ck.warn::before { content: "!"; }
+.ck.err { background: var(--stamp-weak); color: var(--stamp); } .ck.err::before { content: "!"; }
+.ck a { color: inherit; }
+.split { display: flex; flex-direction: column; gap: 6px; }
+.split-bar { height: 8px; border-radius: 4px; background: var(--warn-weak); overflow: hidden; }
+.split-bar span { display: block; height: 100%; background: var(--accent); }
+.split-legend { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 12px; color: var(--muted); }
+.dot { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 4px; }
+.dot.a { background: var(--accent); } .dot.b { background: var(--warn); }
+.chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.chipbtn { border: 1px solid var(--warn); background: var(--warn-weak); color: var(--warn); border-radius: 999px; padding: 6px 14px; font-size: 13px; min-height: 36px; }
 .inline-confirm { display: flex; flex-direction: column; gap: 8px; border: 1px dashed var(--stamp); border-radius: 6px; padding: 10px; }
 @media (prefers-reduced-motion: no-preference) { .row, .btn { transition: background .15s; } }
 </style>
@@ -146,7 +165,7 @@ h2 { font-size: 15px; margin: 0; font-weight: 700; text-wrap: balance; }
 </header>
 
 <main id="app">
-  <section class="sec"><div class="list"><div class="empty">台帳を読み込んでいる。右下の「撮影」から領収書を登録できる。</div></div></section>
+  <section class="sec"><div class="list"><div class="empty">台帳を読み込んでいる。現場や配送先で受け取った領収書は、右下の「撮影」から登録できる。</div></div></section>
 </main>
 
 <div class="fabs">
@@ -169,66 +188,84 @@ h2 { font-size: 15px; margin: 0; font-weight: 700; text-wrap: balance; }
 
 <script>
 (() => {
-  const CATEGORIES = ["旅費交通費", "会議費", "交際費", "消耗品費", "通信費", "新聞図書費", "支払手数料", "雑費"];
+  // ===== 業種設定：小規模な建設機材卸（販売・レンタル・配送・整備） =====
+  const CATEGORIES = ["車両費", "旅費交通費", "荷造運賃", "修繕費", "消耗品費", "工具器具備品", "会議費", "交際費", "通信費", "支払手数料", "雑費"];
+  const VENDOR_TYPES = { "ガソリンスタンド": "車両費", "高速道路・駐車場": "旅費交通費", "ホームセンター・工具店": "消耗品費", "部品・整備工場": "修繕費",
+    "運送・宅配": "荷造運賃", "飲食店": "会議費", "コンビニ・小売": "消耗品費", "交通機関・宿泊": "旅費交通費", "その他": "" };
   const PAYMENTS = ["現金", "クレジットカード", "電子マネー", "QRコード決済", "その他"];
   const STATUS_LABEL = { processing: "読取中", needs_review: "要確認", confirmed: "確定", void: "取消" };
-  const yen = n => (n == null || n === "" || isNaN(n)) ? "—" : "¥" + Number(n).toLocaleString("ja-JP");
+  const ISSUE_LABEL = { regno: "登録番号なし", meal: "飲食で人数未記録", vehicle: "車両費で車両未選択" };
+
+  const yen = n => (n == null || n === "" || isNaN(n)) ? "—" : "¥" + Math.round(Number(n)).toLocaleString("ja-JP");
   const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   const newId = p => p + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
-  const today = () => new Date().toISOString().slice(0, 10);
+  const ymd = d => d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
+  const today = () => ymd(new Date());
+  const daysSince = s => { if (!s) return 0; const [y, m, d] = s.split("-").map(Number); const t = new Date(); t.setHours(0, 0, 0, 0); return Math.round((t - new Date(y, m - 1, d)) / 86400000); };
   const $ = sel => document.querySelector(sel);
   const ls = { get(k, d) { try { const v = localStorage.getItem(k); return v == null ? d : JSON.parse(v); } catch { return d; } },
                set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} } };
 
   const S = { db: null, assets: null, sample: null, user: null, downloads: null, me: null, aiOk: false,
-              customers: [], projects: [], receipts: [], loaded: { c: false, p: false, r: false }, offline: false,
+              customers: [], projects: [], receipts: [], vendors: [], vehicles: [], loaded: {}, offline: false,
               filters: ls.get("rl.filters", {}), axis: ls.get("rl.axis", "project"), period: ls.get("rl.period", { from: "", to: "" }),
-              zoom: false, voiding: false, processing: 0 };
+              zoom: false, voiding: false, busy: false };
 
-  function toast(msg) { const t = $("#toast"); t.textContent = msg; t.hidden = false; clearTimeout(toast.h); toast.h = setTimeout(() => t.hidden = true, 2600); }
+  function toast(msg) { const t = $("#toast"); t.textContent = msg; t.hidden = false; clearTimeout(toast.h); toast.h = setTimeout(() => t.hidden = true, 2800); }
   const imgUrl = r => r.assetId ? "/_blob/" + r.assetId : (r.thumb || "");
   const cust = id => S.customers.find(c => c.id === id);
   const proj = id => S.projects.find(p => p.id === id);
+  const veh = id => S.vehicles.find(v => v.id === id);
   const custName = id => cust(id)?.name || "";
   const projName = id => proj(id)?.name || "";
-  // 取引先 → 顧客マスタの照合
-  const norm = s => String(s || "").normalize("NFKC").toLowerCase().replace(/株式会社|有限会社|合同会社|\(株\)|\(有\)|[\s・,.\-_]/g, "");
-  const stripBranch = s => (String(s || "").replace(/\s*\S*(店|支店|営業所|本店|出張所)$/, "").trim() || String(s || "").trim());
-  const vendorAsCustomer = r => (r.vendorCompany || stripBranch(r.vendor) || "").trim();
-  function matchCustomer(name, regNo) {
-    if (regNo) { const c = S.customers.find(c => c.regNo && c.regNo === regNo); if (c) return c; }
-    const n = norm(name); if (!n) return null;
-    return S.customers.find(c => { const m = norm(c.name); return m && (n === m || (m.length >= 3 && n.includes(m)) || (n.length >= 3 && m.includes(n))); }) || null;
-  }
-  function nextCustomerCode() { const max = S.customers.reduce((mx, c) => Math.max(mx, parseInt(String(c.code || "").replace(/\D/g, ""), 10) || 0), 0); return String(max + 1).padStart(3, "0"); }
-  async function createCustomer(name, regNo) {
-    const id = newId("c"); const doc = { name, code: nextCustomerCode(), regNo: regNo || "", source: "AI読取", createdAt: new Date().toISOString() };
-    await S.db.collection("customers").doc(id).set(doc); S.customers = [...S.customers, { id, ...doc }]; return id;
+  const projLabel = id => { const p = proj(id); return p ? (p.code ? p.code + " " : "") + p.name : ""; };
+  const vehLabel = id => { const v = veh(id); return v ? v.name + (v.plate ? "（" + v.plate + "）" : "") : ""; };
+  const costType = r => r.projectId ? "現場原価" : "販管費";
+  const isMeal = r => r.vendorType === "飲食店" || r.category === "会議費" || r.category === "交際費";
+  const isFuel = r => r.vendorType === "ガソリンスタンド";
+  const needsVehicle = r => r.category === "車両費" || isFuel(r);
+  function issuesOf(r) {
+    const out = [];
+    if (!r.regNo) out.push("regno");
+    if (isMeal(r) && !(r.people > 0)) out.push("meal");
+    if (needsVehicle(r) && !r.vehicleId) out.push("vehicle");
+    return out;
   }
 
-  // ---------- boot ----------
+  // ----- 取引先マスタとの照合 -----
+  const norm = s => String(s || "").normalize("NFKC").toLowerCase().replace(/株式会社|有限会社|合同会社|\(株\)|\(有\)|[\s・,.\-_]/g, "");
+  const stripBranch = s => (String(s || "").replace(/\s*\S*(店|支店|営業所|本店|出張所|SS)$/i, "").trim() || String(s || "").trim());
+  const vendorBase = r => (r.vendorCompany || stripBranch(r.vendor) || "").trim();
+  function matchVendor(name, regNo) {
+    if (regNo) { const v = S.vendors.find(v => v.regNo && v.regNo === regNo); if (v) return v; }
+    const n = norm(name); if (!n) return null;
+    return S.vendors.find(v => { const m = norm(v.name); return m && (n === m || (m.length >= 3 && n.includes(m)) || (n.length >= 3 && m.includes(n))); }) || null;
+  }
+  async function createVendor(name, regNo, type, extra = {}) {
+    const id = newId("v"); const doc = { name, regNo: regNo || "", type: type || "", source: "AI読取", createdAt: new Date().toISOString(), ...extra };
+    await S.db.collection("vendors").doc(id).set(doc); S.vendors = [...S.vendors, { id, ...doc }]; return id;
+  }
+
+  // ===== 起動 =====
   async function boot() {
-    route();
+    render();
     const [db, assets, sample, user, downloads] = await Promise.all(["db", "assets", "sample", "user", "downloads"].map(n => claude.use(n).catch(() => null)));
     Object.assign(S, { db, assets, sample, user, downloads });
     if (user) { try { S.me = await user.id(); } catch {} }
     if (sample) { try { const lim = await sample.limits(); S.aiOk = !!lim?.images; } catch { S.aiOk = false; } }
     if (!db) { S.offline = true; $("#ws-status").textContent = "保存先に接続できない"; render(); return; }
     $("#ws-status").textContent = S.aiOk ? "AI読取 有効" : "手入力モード";
-    const timer = setTimeout(() => { if (!S.loaded.r) { $("#ws-status").textContent = "読込に時間がかかっている"; } }, 10000);
-    const sub = (name, key, flag) => db.collection(name).onSnapshot(snap => {
-      S[key] = snap.docs.map(d => ({ id: d.id, ...d.data() })); S.loaded[flag] = true;
-      if (flag === "r") clearTimeout(timer); render();
-    }, e => { $("#ws-status").textContent = "読込エラー（" + e.code + "）"; });
-    sub("customers", "customers", "c"); sub("projects", "projects", "p"); sub("receipts", "receipts", "r");
+    const timer = setTimeout(() => { if (!S.loaded.receipts) $("#ws-status").textContent = "読込に時間がかかっている"; }, 10000);
+    ["customers", "projects", "receipts", "vendors", "vehicles"].forEach(name => db.collection(name).onSnapshot(snap => {
+      S[name] = snap.docs.map(d => ({ id: d.id, ...d.data() })); S.loaded[name] = true;
+      if (name === "receipts") clearTimeout(timer); render();
+    }, e => { $("#ws-status").textContent = "読込エラー（" + e.code + "）"; }));
   }
 
-  // ---------- routing ----------
-  function route() { render(); window.scrollTo(0, 0); }
-  window.addEventListener("hashchange", () => { document.activeElement?.blur(); S.zoom = false; S.voiding = false; route(); });
+  window.addEventListener("hashchange", () => { document.activeElement?.blur(); S.zoom = false; S.voiding = false; render(); window.scrollTo(0, 0); });
   function view() { const h = location.hash.slice(1); if (h.startsWith("r-")) return { name: "receipt", id: h.slice(2) }; return { name: ["home", "list", "summary", "master"].includes(h) ? h : "home" }; }
 
-  // ---------- capture ----------
+  // ===== 撮影・登録 =====
   async function compress(file, maxSide = 1800, q = 0.85) {
     const bmp = await createImageBitmap(file).catch(() => null);
     if (!bmp) return file;
@@ -237,7 +274,8 @@ h2 { font-size: 15px; margin: 0; font-weight: 700; text-wrap: balance; }
     c.getContext("2d").drawImage(bmp, 0, 0, c.width, c.height);
     return await new Promise(res => c.toBlob(b => res(b || file), "image/jpeg", q));
   }
-  async function sha256(blob) { const buf = await blob.arrayBuffer(); const h = await crypto.subtle.digest("SHA-256", buf); return [...new Uint8Array(h)].map(b => b.toString(16).padStart(2, "0")).join(""); }
+  async function sha256(blob) { const h = await crypto.subtle.digest("SHA-256", await blob.arrayBuffer()); return [...new Uint8Array(h)].map(b => b.toString(16).padStart(2, "0")).join(""); }
+  const blobToDataUrl = b => new Promise(res => { const fr = new FileReader(); fr.onload = () => res(fr.result); fr.readAsDataURL(b); });
 
   async function handleFiles(files) {
     if (!S.db) { toast("保存先に接続できないため登録できない"); return; }
@@ -245,17 +283,17 @@ h2 { font-size: 15px; margin: 0; font-weight: 700; text-wrap: balance; }
     for (const file of list) {
       try {
         const hash = await sha256(file);
-        const dup = S.receipts.find(r => r.sha256 === hash && r.status !== "void");
-        if (dup) { toast("同じ画像が登録済みのためスキップした"); continue; }
+        if (S.receipts.find(r => r.sha256 === hash && r.status !== "void")) { toast("同じ画像が登録済みのためスキップした"); continue; }
         const blob = await compress(file);
         let assetId = null, thumb = null;
         if (S.assets) { try { assetId = (await S.assets.upload(blob, { type: "image/jpeg" })).id; } catch (e) { toast("画像の保存に失敗した（" + (e.code || "error") + "）"); } }
         if (!assetId) thumb = await blobToDataUrl(await compress(file, 700, 0.6));
         const id = newId("r"); firstId = firstId || id;
         const last = ls.get("rl.last", {});
+        const lastProj = proj(last.projectId) && proj(last.projectId).status !== "closed" ? last.projectId : "";
         const doc = { status: S.aiOk ? "processing" : "needs_review", sha256: hash, assetId, thumb,
-          issuedOn: "", vendor: "", regNo: "", total: null, tax10: null, tax8: null, payment: "", description: "",
-          category: "", customerId: S.aiOk ? "" : (last.customerId || ""), projectId: S.aiOk ? "" : (last.projectId || ""), memo: "", vendorCompany: "",
+          issuedOn: "", vendor: "", vendorCompany: "", vendorId: "", vendorType: "", regNo: "", total: null, tax10: null, tax8: null, payment: "", description: "",
+          category: "", customerId: lastProj ? proj(lastProj).customerId : "", projectId: lastProj, vehicleId: "", liters: null, people: null, memo: "",
           createdBy: S.me || "", createdAt: new Date().toISOString(), confirmedAt: "", voidReason: "",
           confidence: {}, ocrError: "", history: [{ at: new Date().toISOString(), by: S.me || "", action: "登録" }] };
         await S.db.collection("receipts").doc(id).set(doc);
@@ -264,70 +302,72 @@ h2 { font-size: 15px; margin: 0; font-weight: 700; text-wrap: balance; }
     }
     if (firstId) { toast(list.length > 1 ? list.length + "枚を登録した。読取が終わったものから確認できる" : "登録した。読取中…"); if (list.length === 1) location.hash = "r-" + firstId; }
   }
-  const blobToDataUrl = b => new Promise(res => { const fr = new FileReader(); fr.onload = () => res(fr.result); fr.readAsDataURL(b); });
   $("#cam").addEventListener("change", e => { handleFiles(e.target.files); e.target.value = ""; });
   $("#pick").addEventListener("change", e => { handleFiles(e.target.files); e.target.value = ""; });
 
   async function extract(id, blob) {
-    S.processing++; render();
-    const prompt = `あなたは日本の領収書・レシートの読み取り担当である。添付画像は1枚の領収書またはレシートの写真である。
+    const prompt = `あなたは建設機材の卸売会社（販売・レンタル・現場への配送・整備）の経理担当である。添付画像は社員が業務で受け取った領収書またはレシート1枚の写真である。
 次のキーを持つJSONオブジェクトだけを返すこと。読み取れない項目は null とする。
 - is_receipt: 領収書/レシートなら true
 - issued_on: 取引日 "YYYY-MM-DD"（和暦は西暦に変換。令和n年 = 2018+n年）
-- vendor: 発行者（店名・会社名。レシート記載のまま）
-- vendor_company: 発行者の会社名・ブランド名（「〇〇店」「〇〇支店」等の店舗名を除いたもの）
+- vendor: 発行者（店名・会社名。記載のまま）
+- vendor_company: 発行者の会社名・ブランド名（「〇〇店」「〇〇SS」等の店舗名を除いたもの）
+- vendor_type: 発行者の業種。次から選ぶ: ${Object.keys(VENDOR_TYPES).join(" / ")}
 - reg_no: 適格請求書発行事業者登録番号 "T"+13桁（ハイフン・空白は除く）
 - total: 税込合計金額（整数、円）
-- tax10: 10%対象の消費税額（整数）。内税表記の場合も税額を記載
+- tax10: 10%対象の消費税額（整数。内税表記でも税額を記載）
 - tax8: 8%（軽減税率）対象の消費税額（整数）
 - payment: 支払方法。次から選ぶ: ${PAYMENTS.join(" / ")}
-- description: 但し書き・主な品目（30文字以内）
-- category: 勘定科目の推定。次から選ぶ: ${CATEGORIES.join(" / ")}
+- description: 但し書き・主な品目（30文字以内。例：軽油 48.0L、養生テープほか）
+- category: 勘定科目の推定。次から選ぶ: ${CATEGORIES.join(" / ")}（燃料=車両費、高速・駐車場=旅費交通費、配送料=荷造運賃、機材や車両の部品・修理=修繕費、10万円未満の工具=消耗品費）
+- fuel_liters: 給油量（L、数値。燃料のレシートのみ）
+- people: 人数（飲食店のレシートに人数の記載があれば整数）
 - confidence: 各キー(issued_on, vendor, reg_no, total, tax10, tax8)の確からしさ 0〜1 の数値オブジェクト`;
     try {
       const r = await S.sample.json(prompt, { images: [blob], modelTier: "default", cache: false });
       const cur = (await S.db.doc("receipts/" + id).get()).data() || {};
-      const toInt = v => (v == null || v === "" || isNaN(Number(v))) ? null : Math.round(Number(v));
+      const toNum = (v, int) => (v == null || v === "" || isNaN(Number(v))) ? null : (int ? Math.round(Number(v)) : Math.round(Number(v) * 10) / 10);
+      const vendorType = Object.keys(VENDOR_TYPES).includes(r?.vendor_type) ? r.vendor_type : "";
       const patch = { status: "needs_review", issuedOn: /^\d{4}-\d{2}-\d{2}$/.test(r?.issued_on || "") ? r.issued_on : "",
-        vendor: r?.vendor || "", vendorCompany: r?.vendor_company || "", regNo: (r?.reg_no || "").replace(/[^T0-9]/g, ""), total: toInt(r?.total), tax10: toInt(r?.tax10), tax8: toInt(r?.tax8),
+        vendor: r?.vendor || "", vendorCompany: r?.vendor_company || "", vendorType, regNo: (r?.reg_no || "").replace(/[^T0-9]/g, ""),
+        total: toNum(r?.total, true), tax10: toNum(r?.tax10, true), tax8: toNum(r?.tax8, true), liters: toNum(r?.fuel_liters), people: toNum(r?.people, true),
         payment: PAYMENTS.includes(r?.payment) ? r.payment : "", description: r?.description || "",
-        category: CATEGORIES.includes(r?.category) ? r.category : "", confidence: r?.confidence || {},
+        category: CATEGORIES.includes(r?.category) ? r.category : (VENDOR_TYPES[vendorType] || ""), confidence: r?.confidence || {},
         ocrError: r?.is_receipt === false ? "領収書ではない可能性がある" : "" };
-      // 取引先の過去実績から科目・案件を推定（同じ取引先の直近確定分）
-      const prev = S.receipts.filter(x => x.status === "confirmed" && x.vendor && patch.vendor && x.vendor === patch.vendor).sort((a, b) => (b.confirmedAt || "").localeCompare(a.confirmedAt || ""))[0];
-      if (prev) { patch.category = prev.category || patch.category; if (!cur.projectId && prev.projectId) { patch.projectId = prev.projectId; patch.customerId = prev.customerId; } }
-      if (!patch.customerId && !cur.customerId) { const c = matchCustomer(patch.vendorCompany || stripBranch(patch.vendor), patch.regNo); if (c) patch.customerId = c.id; }
+      const v = matchVendor(patch.vendorCompany || stripBranch(patch.vendor), patch.regNo);
+      if (v) { patch.vendorId = v.id; if (!patch.vendorType && v.type) patch.vendorType = v.type; }
+      // 同じ取引先の直近の確定分から、科目・車両を引き継ぐ
+      const prev = S.receipts.filter(x => x.status === "confirmed" && ((v && x.vendorId === v.id) || (patch.vendor && x.vendor === patch.vendor))).sort((a, b) => (b.confirmedAt || "").localeCompare(a.confirmedAt || ""))[0];
+      if (prev) { if (prev.category) patch.category = prev.category; if (prev.vehicleId && needsVehicle(patch)) patch.vehicleId = prev.vehicleId; }
       patch.history = [...(cur.history || []), { at: new Date().toISOString(), by: "", action: "AI読取完了" }];
       await S.db.doc("receipts/" + id).update(patch);
     } catch (e) {
       const msg = e?.code === "not_granted" ? "AI読取が許可されていないため手入力で登録する" : e?.code === "rate_limited" ? "AI読取の回数制限に達したため手入力で登録する" : "AI読取に失敗したため手入力で登録する";
       try { await S.db.doc("receipts/" + id).update({ status: "needs_review", ocrError: msg }); } catch {}
       if (e?.code === "not_granted") S.aiOk = false;
-    } finally { S.processing--; render(); }
+    }
   }
 
-  // ---------- render ----------
+  // ===== 画面 =====
   function render() {
     const v = view();
-    document.querySelectorAll(".tabs a").forEach(a => a.setAttribute("aria-current", a.dataset.tab === (v.name === "receipt" ? "" : v.name) ? "page" : "false"));
+    document.querySelectorAll(".tabs a").forEach(a => a.setAttribute("aria-current", a.dataset.tab === v.name ? "page" : "false"));
     const app = $("#app");
     const active = document.activeElement; const keepId = active && active.id && app.contains(active) ? active.id : null;
-    if (v.name === "receipt" && keepId) return; // 入力中は再描画しない
+    if ((v.name === "receipt" || v.name === "master") && (keepId || S.busy)) return; // 入力中・処理中は再描画しない
     if (v.name === "list" && keepId && keepId.startsWith("flt-")) { renderListRows(); return; }
-    if (v.name === "master" && keepId) return;
     app.innerHTML = v.name === "home" ? homeView() : v.name === "list" ? listView() : v.name === "summary" ? summaryView() : v.name === "master" ? masterView() : receiptView(v.id);
     if (v.name === "list") renderListRows();
     bind(v);
   }
 
   function rowHtml(r) {
-    const sub = [r.issuedOn || "日付未入力", custName(r.customerId), projName(r.projectId)].filter(Boolean).join(" · ");
-    const u = imgUrl(r);
-    return `<a class="row" href="#r-${r.id}"><div class="thumb" style="${u ? `background-image:url('${u}')` : ""}"></div>
-      <div style="min-width:0"><div class="t">${esc(r.vendor || (r.status === "processing" ? "読み取り中…" : "取引先未入力"))}</div><div class="m">${esc(sub)}</div></div>
+    const sub = [r.issuedOn || "日付未入力", r.projectId ? projLabel(r.projectId) : (r.status === "confirmed" ? "販管費" : ""), r.vehicleId ? veh(r.vehicleId)?.name : ""].filter(Boolean).join(" · ");
+    const u = imgUrl(r); const iss = r.status === "confirmed" ? issuesOf(r).filter(k => k !== "regno") : [];
+    return `<a class="row" href="#r-${r.id}"><div class="thumb ${u ? "" : "noimg"}" style="${u ? `background-image:url('${u}')` : ""}">${u ? "" : "見本"}</div>
+      <div style="min-width:0"><div class="t">${esc(r.vendor || (r.status === "processing" ? "読み取り中…" : "取引先未入力"))}${r.category ? `<span class="src">${esc(r.category)}</span>` : ""}</div><div class="m">${esc(sub)}${iss.length ? ` · <span style="color:var(--warn)">${iss.map(k => ISSUE_LABEL[k]).join("・")}</span>` : ""}</div></div>
       <div class="amt"><span class="num">${yen(r.total)}</span><span class="pill ${r.status}">${STATUS_LABEL[r.status]}</span></div></a>`;
   }
-
   function topGroups(rs, keyFn, labelFn, n) {
     const m = new Map(); rs.forEach(r => { const k = keyFn(r); const o = m.get(k) || { key: k, label: labelFn(k), count: 0, total: 0 }; o.count++; o.total += r.total || 0; m.set(k, o); });
     return [...m.values()].sort((a, b) => b.total - a.total).slice(0, n);
@@ -335,88 +375,121 @@ h2 { font-size: 15px; margin: 0; font-weight: 700; text-wrap: balance; }
   function barList(rows, axis, empty) {
     if (!rows.length) return `<div class="empty">${empty}</div>`;
     const max = Math.max(1, ...rows.map(o => o.total));
-    return rows.map(o => `<button type="button" class="barbtn" data-goaxis="${axis}"><div style="min-width:0"><div class="t">${esc(o.label)}</div><div class="bar-track"><div class="bar" style="width:${(o.total / max * 100).toFixed(1)}%"></div></div></div><div class="amt"><span class="num">${yen(o.total)}</span><span class="m" style="font-size:11px;color:var(--muted)">${o.count}件</span></div></button>`).join("");
+    return rows.map(o => `<button type="button" class="barbtn" data-goaxis="${axis}"><div style="min-width:0"><div class="t">${esc(o.label)}</div><div class="bar-track"><div class="bar" style="width:${(o.total / max * 100).toFixed(1)}%"></div></div></div><div class="amt"><span class="num">${yen(o.total)}</span><span style="font-size:11px;color:var(--muted)">${o.count}件</span></div></button>`).join("");
   }
+  const sum = a => a.reduce((s, r) => s + (r.total || 0), 0);
+
   function homeView() {
     if (S.offline) return `<div class="notice err">保存先（共有データベース）に接続できない。claude.ai にサインインした状態で開くと利用できる。</div>`;
     const pending = S.receipts.filter(r => r.status === "needs_review" || r.status === "processing").sort((a, b) => (b.createdAt || "").localeCompare(a.createdAt || ""));
     const conf = S.receipts.filter(r => r.status === "confirmed");
-    const sum = a => a.reduce((s, r) => s + (r.total || 0), 0);
     const ym = today().slice(0, 7);
     const monthConf = conf.filter(r => (r.issuedOn || "").startsWith(ym));
     const months = []; { const d = new Date(); d.setDate(1); for (let i = 0; i < 6; i++) { months.push(d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0")); d.setMonth(d.getMonth() - 1); } }
     const monthRows = months.map(m => { const rs = conf.filter(r => (r.issuedOn || "").startsWith(m)); return { key: m, label: m.replace("-", "年") + "月", count: rs.length, total: sum(rs) }; });
-    const byCust = topGroups(conf, r => r.customerId || "", k => k ? custName(k) : "顧客未設定", 5);
-    const byProj = topGroups(conf, r => r.projectId || "", k => k ? projName(k) + "（" + custName(proj(k)?.customerId) + "）" : "案件未設定", 5);
-    const recent = conf.slice().sort((a, b) => (b.confirmedAt || "").localeCompare(a.confirmedAt || "")).slice(0, 5);
-    const unlinked = S.receipts.filter(r => r.status === "confirmed" && !r.customerId && vendorAsCustomer(r)).length;
-    const noData = `確定済みの領収書がまだない。`;
+    const byProj = topGroups(conf.filter(r => r.projectId), r => r.projectId, k => projLabel(k), 5);
+    const byCust = topGroups(conf, r => r.customerId || "", k => k ? custName(k) : "社内（販管費）", 5);
+    const genba = sum(monthConf.filter(r => r.projectId)), hq = sum(monthConf.filter(r => !r.projectId));
+    const issueCount = Object.keys(ISSUE_LABEL).map(k => [k, conf.filter(r => issuesOf(r).includes(k)).length]).filter(([, n]) => n);
+    const noData = "確定済みの領収書がまだない。";
+    const empty = S.loaded.receipts && S.receipts.length === 0;
     return `
+      ${empty ? `<div class="card"><div style="font-weight:700">はじめに</div><div style="font-size:14px">右下の「撮影」で領収書を撮ると、AIが日付・取引先・金額・税額・科目を読み取る。操作感を見たいときは、建設機材卸のサンプルデータ（得意先・現場・車両・領収書12枚）を入れて試せる。</div>
+        <div class="btns"><button class="btn primary" type="button" id="seed-home">サンプルデータを入れる</button></div></div>` : ""}
       <div class="stats">
         <div class="stat ${pending.length ? "alert" : ""}"><div class="k">要確認</div><div class="v num">${pending.length}</div></div>
         <div class="stat"><div class="k">今月の確定額</div><div class="v num">${yen(sum(monthConf))}</div></div>
         <div class="stat"><div class="k">累計（${conf.length}件）</div><div class="v num">${yen(sum(conf))}</div></div>
       </div>
-      ${unlinked ? `<div class="notice info">顧客が未設定の確定済み領収書が${unlinked}件ある。<a href="#master">マスタ</a>で取引先から顧客を一括登録できる。</div>` : ""}
-      ${!S.aiOk && S.loaded.r ? `<div class="notice warn">この表示ではAI読取が使えないため、撮影後に項目を手入力する。</div>` : ""}
+      ${monthConf.length ? `<div class="split" aria-label="今月の内訳"><div class="split-bar"><span style="width:${(genba / Math.max(1, genba + hq) * 100).toFixed(1)}%"></span></div>
+        <div class="split-legend"><span><i class="dot a"></i>現場原価 <b class="num">${yen(genba)}</b></span><span><i class="dot b"></i>販管費 <b class="num">${yen(hq)}</b></span></div></div>` : ""}
+      ${!S.aiOk && S.loaded.receipts ? `<div class="notice warn">この表示ではAI読取が使えないため、撮影後に項目を手入力する。</div>` : ""}
       <section class="sec"><div class="sec-head"><h2>要確認キュー</h2><span class="sub">撮影済み・未確定</span></div>
-        <div class="list">${pending.length ? pending.map(rowHtml).join("") : `<div class="empty">${S.loaded.r ? "未確認の領収書はない。右下の「撮影」で領収書を撮ると、AIが日付・取引先・金額を読み取ってここに並ぶ。" : "読み込み中…"}</div>`}</div></section>
+        <div class="list">${pending.length ? pending.map(rowHtml).join("") : `<div class="empty">${S.loaded.receipts ? "未確認の領収書はない。現場や配送先で受け取った領収書をその場で撮影すると、ここに並ぶ。" : "読み込み中…"}</div>`}</div></section>
+      ${issueCount.length ? `<section class="sec"><div class="sec-head"><h2>経理チェック</h2><span class="sub">確定済みのうち確認が必要なもの</span></div>
+        <div class="chips">${issueCount.map(([k, n]) => `<button type="button" class="chipbtn" data-issue="${k}">${ISSUE_LABEL[k]} <b class="num">${n}</b></button>`).join("")}</div></section>` : ""}
       <section class="sec"><div class="sec-head"><h2>集計</h2><span class="sub">確定済み・取引日ベース</span><a href="#summary">詳しく見る</a></div>
         <div class="dash">
-          <div class="list"><h3>顧客別（上位5）</h3>${barList(byCust, "customer", noData)}</div>
-          <div class="list"><h3>案件別（上位5）</h3>${barList(byProj, "project", noData)}</div>
+          <div class="list"><h3>現場・案件別（上位5）</h3>${barList(byProj, "project", "現場に紐付いた経費はまだない。")}</div>
+          <div class="list"><h3>得意先別（上位5）</h3>${barList(byCust, "customer", noData)}</div>
           <div class="list"><h3>月別（直近6か月）</h3>${barList(monthRows, "month", noData)}</div>
-        </div></section>
-      <section class="sec"><div class="sec-head"><h2>最近確定した領収書</h2><a href="#list">すべて見る</a></div>
-        <div class="list">${recent.length ? recent.map(rowHtml).join("") : `<div class="empty">確定済みの領収書はまだない。</div>`}</div></section>`;
+        </div></section>`;
   }
 
-  // ---- receipt detail / review ----
+  // ----- 領収書の確認・修正 -----
+  function checksHtml(x, selfId) {
+    const out = [];
+    out.push(["info", x.projectId ? `現場原価として集計する（${esc(projLabel(x.projectId))}）` : "現場・案件が未選択のため、販管費（本社・倉庫の経費）として集計する"]);
+    if (!x.regNo && x.total) out.push(["warn", "登録番号（T+13桁）が未入力。レシートに記載がない場合、インボイス未登録の事業者からの仕入となり、仕入税額控除は経過措置（2026年10月以降は50%）の扱いになる。"]);
+    if (isMeal(x)) {
+      if (x.people > 0 && x.total) { const per = Math.round(x.total / x.people);
+        out.push(per <= 10000 ? ["ok", `1人あたり${yen(per)}。1人1万円以下の飲食費は交際費から除外できる（相手先・参加人数の記録が条件）。相手先をメモに残すこと。`]
+                              : ["warn", `1人あたり${yen(per)}。1人1万円を超えるため交際費として扱う。`]);
+        if (per > 10000 && x.category === "会議費") out.push(["warn", "科目が会議費になっている。交際費への変更を検討すること。"]);
+      } else out.push(["warn", "飲食の領収書。参加人数を入力し、相手先（例：山王建設 現場所長ほか2名）をメモに残すこと。"]);
+    }
+    if (needsVehicle(x) && !x.vehicleId) out.push(["warn", "車両を選ぶと、車両ごとの燃料費・維持費を集計できる。"]);
+    if (isFuel(x) && x.liters > 0 && x.total) out.push(["info", `給油 ${x.liters}L・1Lあたり${yen(x.total / x.liters)}`]);
+    if ((x.category === "消耗品費" || x.category === "工具器具備品") && x.total >= 100000) out.push(["warn", "10万円以上の工具・備品は、固定資産または少額減価償却資産の特例の対象になる場合がある。"]);
+    const d = daysSince(x.issuedOn);
+    if (x.status !== "confirmed" && d > 60) out.push(["warn", `取引日から${d}日経過している。電子帳簿保存法のスキャナ保存では、受領後おおむね2か月と7営業日以内の入力が目安。`]);
+    const dup = S.receipts.find(o => o.id !== selfId && o.status !== "void" && x.issuedOn && x.total != null && o.issuedOn === x.issuedOn && o.total === x.total);
+    if (dup) out.push(["err", `同じ日付・金額の領収書がある：<a href="#r-${dup.id}">${esc(dup.vendor || "取引先未入力")}（${STATUS_LABEL[dup.status]}）</a>。重複登録でないか確認すること。`]);
+    return out.map(([lv, t]) => `<li class="ck ${lv}">${t}</li>`).join("");
+  }
+
   function receiptView(id) {
     const r = S.receipts.find(x => x.id === id);
-    if (!r) return `<div class="notice ${S.loaded.r ? "err" : "info"}">${S.loaded.r ? "この領収書は見つからない。" : "読み込み中…"}</div><a class="btn" href="#home">ホームへ戻る</a>`;
+    if (!r) return `<div class="notice ${S.loaded.receipts ? "err" : "info"}">${S.loaded.receipts ? "この領収書は見つからない。" : "読み込み中…"}</div><a class="btn" href="#home">ホームへ戻る</a>`;
     const conf = r.confidence || {};
     const low = k => conf[k] != null && conf[k] < 0.8 ? " low" : "";
     const lowHint = k => conf[k] != null && conf[k] < 0.8 ? `<span class="hint">読取の確度が低い。画像と照合すること</span>` : "";
-    const dup = S.receipts.find(x => x.id !== r.id && x.status !== "void" && r.issuedOn && r.total != null && x.issuedOn === r.issuedOn && x.total === r.total);
     const ro = r.status === "void";
-    const candName = vendorAsCustomer(r);
-    const sugg = !r.customerId && r.status !== "void" ? matchCustomer(candName, r.regNo) : null;
-    const selCust = r.customerId || sugg?.id || "";
-    const showNew = !ro && !selCust && !!candName;
-    const projOpts = S.projects.filter(p => !selCust || p.customerId === selCust);
+    const dis = ro ? "disabled" : "";
+    const vend = S.vendors.find(v => v.id === r.vendorId) || (r.status !== "void" ? matchVendor(vendorBase(r), r.regNo) : null);
+    const candName = vendorBase(r);
+    const showNewVendor = !ro && !vend && !!candName;
+    const projOpts = S.projects.filter(p => (!r.customerId || p.customerId === r.customerId) && (p.status !== "closed" || p.id === r.projectId));
     const u = imgUrl(r);
-        return `
+    return `
       <div class="sec-head"><button type="button" id="back" class="linkbtn" style="margin-left:0">← 戻る</button><span class="pill ${r.status}" style="margin-left:auto">${STATUS_LABEL[r.status]}</span></div>
-      <div class="photo ${S.zoom ? "zoom" : ""}" id="photo">${u ? `<img src="${u}" alt="領収書の画像">` : `<div class="none">画像なし</div>`}</div>
+      <div class="photo ${S.zoom ? "zoom" : ""}" id="photo">${u ? `<img src="${u}" alt="領収書の画像">` : `<div class="none">画像なし（サンプルデータ）</div>`}</div>
       ${r.status === "processing" ? `<div class="notice info">AIが読み取り中。数秒で項目が入る。</div>` : ""}
       ${r.ocrError ? `<div class="notice warn">${esc(r.ocrError)}</div>` : ""}
-      ${dup ? `<div class="notice err">同じ日付・金額の領収書がある：<a href="#r-${dup.id}">${esc(dup.vendor || "取引先未入力")}（${STATUS_LABEL[dup.status]}）</a>。重複でないか確認すること。</div>` : ""}
       ${r.status === "void" ? `<div class="notice err">取消済み。理由：${esc(r.voidReason)}</div>` : ""}
       <form class="card" id="rform" novalidate>
         <div class="grid2">
-          <div class="f${low("issued_on")}"><label for="f-issuedOn">取引日 *</label><input type="date" id="f-issuedOn" value="${esc(r.issuedOn)}" ${ro ? "disabled" : ""}>${lowHint("issued_on")}</div>
-          <div class="f${low("total")}"><label for="f-total">税込合計（円） *</label><input type="number" inputmode="numeric" id="f-total" class="num" value="${r.total ?? ""}" ${ro ? "disabled" : ""}>${lowHint("total")}</div>
-        </div>
-        <div class="f${low("vendor")}"><label for="f-vendor">取引先 *</label><input id="f-vendor" value="${esc(r.vendor)}" ${ro ? "disabled" : ""}>${lowHint("vendor")}</div>
-        <div class="grid2">
-          <div class="f${low("tax10")}"><label for="f-tax10">消費税 10%</label><input type="number" inputmode="numeric" id="f-tax10" class="num" value="${r.tax10 ?? ""}" ${ro ? "disabled" : ""}></div>
-          <div class="f${low("tax8")}"><label for="f-tax8">消費税 8%（軽減）</label><input type="number" inputmode="numeric" id="f-tax8" class="num" value="${r.tax8 ?? ""}" ${ro ? "disabled" : ""}></div>
+          <div class="f${low("issued_on")}"><label for="f-issuedOn">取引日 *</label><input type="date" id="f-issuedOn" value="${esc(r.issuedOn)}" ${dis}>${lowHint("issued_on")}</div>
+          <div class="f${low("total")}"><label for="f-total">税込合計（円） *</label><input type="number" inputmode="numeric" id="f-total" class="num" value="${r.total ?? ""}" ${dis}>${lowHint("total")}</div>
         </div>
         <div class="grid2">
-          <div class="f${low("reg_no")}"><label for="f-regNo">登録番号（T+13桁）</label><input id="f-regNo" class="num" placeholder="T1234567890123" value="${esc(r.regNo)}" ${ro ? "disabled" : ""}></div>
-          <div class="f"><label for="f-payment">支払方法</label><select id="f-payment" ${ro ? "disabled" : ""}><option value="">—</option>${PAYMENTS.map(p => `<option ${p === r.payment ? "selected" : ""}>${p}</option>`).join("")}</select></div>
+          <div class="f${low("vendor")}"><label for="f-vendor">取引先（支払先） *</label><input id="f-vendor" value="${esc(r.vendor)}" ${dis}>${vend ? `<span class="hint" style="color:var(--accent)">取引先マスタ：${esc(vend.name)}</span>` : lowHint("vendor")}</div>
+          <div class="f"><label for="f-vendorType">取引先の業種</label><select id="f-vendorType" ${dis}><option value="">—</option>${Object.keys(VENDOR_TYPES).map(t => `<option ${t === r.vendorType ? "selected" : ""}>${t}</option>`).join("")}</select></div>
         </div>
-        <div class="f"><label for="f-description">但し書き・品目</label><input id="f-description" value="${esc(r.description)}" ${ro ? "disabled" : ""}></div>
+        ${ro ? "" : `<div class="newcust" id="newvendor" ${showNewVendor ? "" : "hidden"}>
+          <label class="chk" for="f-autoVendor"><input type="checkbox" id="f-autoVendor" ${showNewVendor ? "checked" : ""}>取引先マスタに登録する（確定時）</label>
+          <div class="f"><label for="f-newVendorName">登録名</label><input id="f-newVendorName" value="${esc(candName)}"></div></div>`}
         <div class="grid2">
-          <div class="f"><label for="f-customerId">顧客</label><select id="f-customerId" ${ro ? "disabled" : ""}><option value="">（社内経費）</option>${S.customers.filter(c => !c.archived || c.id === r.customerId).map(c => `<option value="${c.id}" ${c.id === selCust ? "selected" : ""}>${esc(c.name)}</option>`).join("")}</select>${sugg ? `<span class="hint" style="color:var(--accent)">取引先名から顧客を推定した</span>` : ""}</div>
-          <div class="f"><label for="f-projectId">案件</label><select id="f-projectId" ${ro ? "disabled" : ""}><option value="">（案件なし）</option>${projOpts.filter(p => p.status !== "closed" || p.id === r.projectId).map(p => `<option value="${p.id}" ${p.id === r.projectId ? "selected" : ""}>${esc(p.name)}${selCust ? "" : "（" + esc(custName(p.customerId)) + "）"}</option>`).join("")}</select></div>
+          <div class="f"><label for="f-projectId">現場・案件（工事番号）</label><select id="f-projectId" ${dis}><option value="">（なし：販管費）</option>${projOpts.map(p => `<option value="${p.id}" ${p.id === r.projectId ? "selected" : ""}>${esc(projLabel(p.id))}</option>`).join("")}</select></div>
+          <div class="f"><label for="f-customerId">得意先</label><select id="f-customerId" ${dis}><option value="">（社内）</option>${S.customers.map(c => `<option value="${c.id}" ${c.id === r.customerId ? "selected" : ""}>${esc(c.name)}</option>`).join("")}</select></div>
         </div>
-        ${ro ? "" : `<div class="newcust" id="newcust" data-cand="${esc(candName)}" ${showNew ? "" : "hidden"}>
-          <label class="chk" for="f-autoCust"><input type="checkbox" id="f-autoCust" ${showNew ? "checked" : ""}>取引先を顧客マスタに登録して紐付ける</label>
-          <div class="f"><label for="f-newCustName">登録する顧客名（確定時に登録）</label><input id="f-newCustName" value="${esc(candName)}"></div></div>`}
-        <div class="f"><label for="f-category">勘定科目</label><select id="f-category" ${ro ? "disabled" : ""}><option value="">—</option>${CATEGORIES.map(c => `<option ${c === r.category ? "selected" : ""}>${c}</option>`).join("")}</select></div>
-        <div class="f"><label for="f-memo">メモ</label><textarea id="f-memo" ${ro ? "disabled" : ""}>${esc(r.memo)}</textarea></div>
+        <div class="grid2">
+          <div class="f"><label for="f-category">勘定科目</label><select id="f-category" ${dis}><option value="">—</option>${CATEGORIES.map(c => `<option ${c === r.category ? "selected" : ""}>${c}</option>`).join("")}</select></div>
+          <div class="f"><label for="f-payment">支払方法</label><select id="f-payment" ${dis}><option value="">—</option>${PAYMENTS.map(p => `<option ${p === r.payment ? "selected" : ""}>${p}</option>`).join("")}</select></div>
+        </div>
+        <div class="grid2">
+          <div class="f" id="w-vehicle"><label for="f-vehicleId">車両</label><select id="f-vehicleId" ${dis}><option value="">—</option>${S.vehicles.map(v => `<option value="${v.id}" ${v.id === r.vehicleId ? "selected" : ""}>${esc(vehLabel(v.id))}</option>`).join("")}</select></div>
+          <div class="f" id="w-liters"><label for="f-liters">給油量（L）</label><input type="number" inputmode="decimal" step="0.1" id="f-liters" class="num" value="${r.liters ?? ""}" ${dis}></div>
+          <div class="f" id="w-people"><label for="f-people">参加人数</label><input type="number" inputmode="numeric" id="f-people" class="num" value="${r.people ?? ""}" ${dis}></div>
+        </div>
+        <div class="grid2">
+          <div class="f${low("tax10")}"><label for="f-tax10">消費税 10%</label><input type="number" inputmode="numeric" id="f-tax10" class="num" value="${r.tax10 ?? ""}" ${dis}></div>
+          <div class="f${low("tax8")}"><label for="f-tax8">消費税 8%（軽減）</label><input type="number" inputmode="numeric" id="f-tax8" class="num" value="${r.tax8 ?? ""}" ${dis}></div>
+        </div>
+        <div class="f${low("reg_no")}"><label for="f-regNo">登録番号（T+13桁）</label><input id="f-regNo" class="num" placeholder="T1234567890123" value="${esc(r.regNo)}" ${dis}></div>
+        <div class="f"><label for="f-description">但し書き・品目</label><input id="f-description" value="${esc(r.description)}" ${dis}></div>
+        <div class="f"><label for="f-memo">メモ（相手先・用途など）</label><textarea id="f-memo" ${dis}>${esc(r.memo)}</textarea></div>
+        <ul class="checks" id="checks" aria-label="チェック結果"></ul>
         <div id="form-msg"></div>
         ${ro ? "" : `<div class="btns">
           ${r.status === "confirmed" ? `<button type="submit" class="btn primary grow" data-act="confirm">修正を保存</button>`
@@ -429,48 +502,53 @@ h2 { font-size: 15px; margin: 0; font-weight: 700; text-wrap: balance; }
       <section class="sec"><h2>変更履歴</h2><div class="history">${(r.history || []).slice().reverse().map(h => `<div><span class="num">${esc((h.at || "").replace("T", " ").slice(0, 16))}</span>　${esc(h.action)}${h.diff ? "：" + esc(h.diff) : ""}</div>`).join("")}</div></section>`;
   }
 
-  const FIELD_LABEL = { issuedOn: "取引日", total: "合計", vendor: "取引先", tax10: "税10%", tax8: "税8%", regNo: "登録番号", payment: "支払", description: "但し書き", customerId: "顧客", projectId: "案件", category: "科目", memo: "メモ" };
+  const FIELD_LABEL = { issuedOn: "取引日", total: "合計", vendor: "取引先", vendorType: "業種", tax10: "税10%", tax8: "税8%", regNo: "登録番号", payment: "支払", description: "但し書き",
+    customerId: "得意先", projectId: "現場", category: "科目", vehicleId: "車両", liters: "給油量", people: "人数", memo: "メモ" };
   function readForm() {
     const g = id => document.getElementById("f-" + id)?.value ?? "";
-    const n = id => { const v = g(id).trim(); return v === "" ? null : Math.round(Number(v)); };
-    return { issuedOn: g("issuedOn"), total: n("total"), vendor: g("vendor").trim(), tax10: n("tax10"), tax8: n("tax8"),
+    const n = (id, int = true) => { const v = g(id).trim(); if (v === "" || isNaN(Number(v))) return null; return int ? Math.round(Number(v)) : Math.round(Number(v) * 10) / 10; };
+    return { issuedOn: g("issuedOn"), total: n("total"), vendor: g("vendor").trim(), vendorType: g("vendorType"), tax10: n("tax10"), tax8: n("tax8"),
       regNo: g("regNo").trim().toUpperCase().replace(/[^T0-9]/g, ""), payment: g("payment"), description: g("description").trim(),
-      customerId: g("customerId"), projectId: g("projectId"), category: g("category"), memo: g("memo") };
+      customerId: g("customerId"), projectId: g("projectId"), category: g("category"), vehicleId: g("vehicleId"), liters: n("liters", false), people: n("people"), memo: g("memo") };
+  }
+  function syncForm(r) {
+    const x = { ...r, ...readForm() };
+    const show = (id, on) => { const el = document.getElementById(id); if (el) el.hidden = !on; };
+    show("w-vehicle", needsVehicle(x) || !!x.vehicleId || x.category === "修繕費");
+    show("w-liters", isFuel(x) || x.liters != null);
+    show("w-people", isMeal(x) || x.people != null);
+    const ck = $("#checks"); if (ck) ck.innerHTML = checksHtml(x, r.id);
   }
   async function saveReceipt(id, mode) {
     const r = S.receipts.find(x => x.id === id); if (!r) return;
     const f = readForm(); const msg = $("#form-msg");
     if (f.projectId) { const p = proj(f.projectId); if (p) f.customerId = p.customerId; }
     const errs = [];
-    if (mode !== "draft") {
-      if (!f.issuedOn) errs.push("issuedOn"); if (!f.vendor) errs.push("vendor"); if (f.total == null || f.total < 0) errs.push("total");
-    }
+    if (mode !== "draft") { if (!f.issuedOn) errs.push("issuedOn"); if (!f.vendor) errs.push("vendor"); if (f.total == null || f.total < 0) errs.push("total"); }
     if (f.regNo && !/^T\d{13}$/.test(f.regNo)) errs.push("regNo");
     document.querySelectorAll(".f.err").forEach(e => e.classList.remove("err"));
     errs.forEach(k => document.getElementById("f-" + k)?.closest(".f")?.classList.add("err"));
     if (errs.length) { msg.innerHTML = `<div class="notice err">${errs.map(k => FIELD_LABEL[k]).join("・")} を確認すること。${errs.includes("regNo") ? "登録番号は T と13桁の数字。" : ""}</div>`; return; }
-    let newCust = "";
-    if (mode !== "draft" && !f.customerId && document.getElementById("f-autoCust")?.checked) {
-      const nm = (document.getElementById("f-newCustName")?.value || "").trim();
-      if (nm) {
-        const ex = matchCustomer(nm, f.regNo);
-        try { f.customerId = ex ? ex.id : await createCustomer(nm, f.regNo); if (!ex) newCust = nm; }
-        catch (e) { msg.innerHTML = `<div class="notice err">顧客を登録できなかった（${esc(e.code || "error")}）。</div>`; return; }
-      }
+    // 取引先マスタ
+    let newVendor = "";
+    const matched = S.vendors.find(v => v.id === r.vendorId) || matchVendor(vendorBase({ ...r, vendor: f.vendor }), f.regNo);
+    f.vendorId = matched?.id || "";
+    if (matched && !matched.type && f.vendorType) { try { await S.db.doc("vendors/" + matched.id).update({ type: f.vendorType }); } catch {} }
+    if (mode !== "draft" && !f.vendorId && document.getElementById("f-autoVendor")?.checked) {
+      const nm = (document.getElementById("f-newVendorName")?.value || "").trim();
+      if (nm) { try { f.vendorId = await createVendor(nm, f.regNo, f.vendorType); newVendor = nm; } catch (e) { msg.innerHTML = `<div class="notice err">取引先を登録できなかった（${esc(e.code || "error")}）。</div>`; return; } }
     }
-    const diff = Object.keys(f).filter(k => (r[k] ?? "") !== (f[k] ?? "")).map(k => {
-      const show = (key, v) => key === "customerId" ? custName(v) : key === "projectId" ? projName(v) : v;
-      return `${FIELD_LABEL[k]} ${show(k, r[k]) || "—"}→${show(k, f[k]) || "—"}`; }).join("、");
+    const show = (k, v) => k === "customerId" ? custName(v) : k === "projectId" ? projLabel(v) : k === "vehicleId" ? veh(v)?.name : v;
+    const diff = Object.keys(FIELD_LABEL).filter(k => (r[k] ?? "") !== (f[k] ?? "")).map(k => `${FIELD_LABEL[k]} ${show(k, r[k]) || "—"}→${show(k, f[k]) || "—"}`).join("、");
     const now = new Date().toISOString();
-    const patch = { ...f };
-    let action = "下書き保存";
+    const patch = { ...f }; let action = "下書き保存";
     if (mode !== "draft") { if (r.status !== "confirmed") { patch.status = "confirmed"; patch.confirmedAt = now; action = "確定"; } else action = "修正"; }
-    if (!diff && action !== "確定") { toast("変更はない"); return; }
-    patch.history = [...(r.history || []), { at: now, by: S.me || "", action, diff: r.status === "confirmed" || action === "下書き保存" ? diff : "" }];
+    if (!diff && !newVendor && action !== "確定") { toast("変更はない"); return; }
+    patch.history = [...(r.history || []), { at: now, by: S.me || "", action, diff: action === "確定" ? (newVendor ? "取引先マスタに登録：" + newVendor : "") : diff }];
     try {
       await S.db.doc("receipts/" + id).update(patch);
-      ls.set("rl.last", { customerId: f.customerId, projectId: f.projectId });
-      toast(newCust ? `確定し、顧客「${newCust}」をマスタに登録した` : action === "確定" ? "確定した" : action === "修正" ? "修正を保存した" : "下書きを保存した");
+      ls.set("rl.last", { projectId: f.projectId });
+      toast(newVendor ? `確定し、取引先「${newVendor}」をマスタに登録した` : action === "確定" ? "確定した" : action === "修正" ? "修正を保存した" : "下書きを保存した");
       if (mode === "next") {
         const nxt = S.receipts.filter(x => x.id !== id && x.status === "needs_review").sort((a, b) => (a.createdAt || "").localeCompare(b.createdAt || ""))[0];
         location.hash = nxt ? "r-" + nxt.id : "home";
@@ -478,92 +556,172 @@ h2 { font-size: 15px; margin: 0; font-weight: 700; text-wrap: balance; }
     } catch (e) { msg.innerHTML = `<div class="notice err">保存できなかった（${esc(e.code || "error")}）。編集権限があるか確認すること。</div>`; }
   }
 
-  // ---- list ----
+  // ----- 一覧 -----
   function filtered() {
     const f = S.filters; const q = (f.q || "").trim().toLowerCase();
     return S.receipts.filter(r =>
       (!f.status || r.status === f.status) && (f.status || r.status !== "void") &&
       (!f.customerId || r.customerId === f.customerId) && (!f.projectId || r.projectId === f.projectId) &&
+      (!f.cost || costType(r) === f.cost) && (!f.vehicleId || r.vehicleId === f.vehicleId) && (!f.category || r.category === f.category) &&
+      (!f.issue || (r.status === "confirmed" && issuesOf(r).includes(f.issue))) &&
       (!f.from || (r.issuedOn || "") >= f.from) && (!f.to || (r.issuedOn || "") <= f.to) &&
-      (f.min == null || f.min === "" || (r.total || 0) >= Number(f.min)) && (f.max == null || f.max === "" || (r.total || 0) <= Number(f.max)) &&
       (!q || [r.vendor, r.description, r.memo, r.regNo].some(x => (x || "").toLowerCase().includes(q)))
     ).sort((a, b) => (b.issuedOn || b.createdAt || "").localeCompare(a.issuedOn || a.createdAt || ""));
   }
+  const opt = (v, label, cur) => `<option value="${esc(v)}" ${v === cur ? "selected" : ""}>${esc(label)}</option>`;
   function listView() {
     const f = S.filters;
     return `<section class="sec"><div class="sec-head"><h2>領収書一覧</h2><button class="linkbtn" id="clear-flt">条件をクリア</button></div>
       <div class="card filters">
-        <div class="f wide"><label for="flt-q">取引先・品目・メモ</label><input id="flt-q" type="search" value="${esc(f.q || "")}" placeholder="例：タクシー"></div>
+        <div class="f wide"><label for="flt-q">取引先・品目・メモ</label><input id="flt-q" type="search" value="${esc(f.q || "")}" placeholder="例：軽油、養生テープ"></div>
         <div class="f"><label for="flt-from">取引日（から）</label><input id="flt-from" type="date" value="${esc(f.from || "")}"></div>
         <div class="f"><label for="flt-to">取引日（まで）</label><input id="flt-to" type="date" value="${esc(f.to || "")}"></div>
-        <div class="f"><label for="flt-customerId">顧客</label><select id="flt-customerId"><option value="">すべて</option>${S.customers.map(c => `<option value="${c.id}" ${c.id === f.customerId ? "selected" : ""}>${esc(c.name)}</option>`).join("")}</select></div>
-        <div class="f"><label for="flt-projectId">案件</label><select id="flt-projectId"><option value="">すべて</option>${S.projects.filter(p => !f.customerId || p.customerId === f.customerId).map(p => `<option value="${p.id}" ${p.id === f.projectId ? "selected" : ""}>${esc(p.name)}</option>`).join("")}</select></div>
-        <div class="f"><label for="flt-min">金額（以上）</label><input id="flt-min" type="number" inputmode="numeric" value="${esc(f.min ?? "")}"></div>
-        <div class="f"><label for="flt-max">金額（以下）</label><input id="flt-max" type="number" inputmode="numeric" value="${esc(f.max ?? "")}"></div>
-        <div class="f wide"><label for="flt-status">ステータス</label><select id="flt-status"><option value="">取消以外すべて</option>${Object.entries(STATUS_LABEL).map(([k, v]) => `<option value="${k}" ${k === f.status ? "selected" : ""}>${v}</option>`).join("")}</select></div>
+        <div class="f"><label for="flt-customerId">得意先</label><select id="flt-customerId"><option value="">すべて</option>${S.customers.map(c => opt(c.id, c.name, f.customerId)).join("")}</select></div>
+        <div class="f"><label for="flt-projectId">現場・案件</label><select id="flt-projectId"><option value="">すべて</option>${S.projects.filter(p => !f.customerId || p.customerId === f.customerId).map(p => opt(p.id, projLabel(p.id), f.projectId)).join("")}</select></div>
+        <div class="f"><label for="flt-cost">区分</label><select id="flt-cost"><option value="">すべて</option>${opt("現場原価", "現場原価", f.cost)}${opt("販管費", "販管費", f.cost)}</select></div>
+        <div class="f"><label for="flt-category">勘定科目</label><select id="flt-category"><option value="">すべて</option>${CATEGORIES.map(c => opt(c, c, f.category)).join("")}</select></div>
+        <div class="f"><label for="flt-vehicleId">車両</label><select id="flt-vehicleId"><option value="">すべて</option>${S.vehicles.map(v => opt(v.id, v.name, f.vehicleId)).join("")}</select></div>
+        <div class="f"><label for="flt-status">ステータス</label><select id="flt-status"><option value="">取消以外すべて</option>${Object.entries(STATUS_LABEL).map(([k, v]) => opt(k, v, f.status)).join("")}</select></div>
+        <div class="f wide"><label for="flt-issue">経理チェック</label><select id="flt-issue"><option value="">指定なし</option>${Object.entries(ISSUE_LABEL).map(([k, v]) => opt(k, v, f.issue)).join("")}</select></div>
       </div>
-      <div class="totalline"><span id="list-count" class="sub" style="color:var(--muted);font-size:13px"></span><button class="btn" id="csv-detail">明細をCSVで保存</button></div>
+      <div class="totalline"><span id="list-count" style="color:var(--muted);font-size:13px"></span><button class="btn" id="csv-detail">明細をCSVで保存</button></div>
       <div class="list" id="list-rows"></div></section>`;
   }
   function renderListRows() {
     const rows = filtered(); const el = $("#list-rows"); if (!el) return;
     el.innerHTML = rows.length ? rows.map(rowHtml).join("") : `<div class="empty">${S.receipts.length ? "条件に合う領収書はない。" : "まだ領収書がない。右下の「撮影」から登録できる。"}</div>`;
-    $("#list-count").textContent = `${rows.length}件　合計 ${yen(rows.reduce((s, r) => s + (r.total || 0), 0))}`;
+    $("#list-count").textContent = `${rows.length}件　合計 ${yen(sum(rows))}`;
   }
 
-  // ---- summary ----
-  const AXES = { project: "案件別", customer: "顧客別", month: "月別", category: "科目別" };
+  // ----- 集計 -----
+  const AXES = { project: "現場別", customer: "得意先別", month: "月別", category: "科目別", cost: "区分別", vehicle: "車両別", vendor: "取引先別" };
   function summaryRows() {
     const p = S.period;
     const rs = S.receipts.filter(r => r.status === "confirmed" && (!p.from || (r.issuedOn || "").slice(0, 7) >= p.from) && (!p.to || (r.issuedOn || "").slice(0, 7) <= p.to));
-    const key = r => S.axis === "project" ? r.projectId || "" : S.axis === "customer" ? r.customerId || "" : S.axis === "month" ? (r.issuedOn || "").slice(0, 7) : r.category || "";
-    const label = k => S.axis === "project" ? (k ? projName(k) + "（" + custName(proj(k)?.customerId) + "）" : "案件なし") : S.axis === "customer" ? (k ? custName(k) : "社内経費（顧客なし）") : S.axis === "month" ? (k ? k.replace("-", "年") + "月" : "日付なし") : (k || "科目未設定");
+    const A = S.axis;
+    const key = r => A === "project" ? r.projectId || "" : A === "customer" ? r.customerId || "" : A === "month" ? (r.issuedOn || "").slice(0, 7) : A === "category" ? r.category || "" : A === "cost" ? costType(r) : A === "vehicle" ? r.vehicleId || "" : (r.vendorId || "n:" + vendorBase(r));
+    const label = k => A === "project" ? (k ? projLabel(k) + "（" + custName(proj(k)?.customerId) + "）" : "現場なし（販管費）") : A === "customer" ? (k ? custName(k) : "社内（販管費）")
+      : A === "month" ? (k ? k.replace("-", "年") + "月" : "日付なし") : A === "category" ? (k || "科目未設定") : A === "cost" ? k : A === "vehicle" ? (k ? vehLabel(k) : "車両なし")
+      : (k.startsWith("n:") ? (k.slice(2) || "取引先未入力") : (S.vendors.find(v => v.id === k)?.name || "—"));
     const m = new Map();
-    rs.forEach(r => { const k = key(r); const o = m.get(k) || { key: k, label: label(k), count: 0, total: 0, tax10: 0, tax8: 0 }; o.count++; o.total += r.total || 0; o.tax10 += r.tax10 || 0; o.tax8 += r.tax8 || 0; m.set(k, o); });
-    const out = [...m.values()]; out.sort((a, b) => S.axis === "month" ? b.key.localeCompare(a.key) : b.total - a.total);
+    rs.forEach(r => { const k = key(r); const o = m.get(k) || { key: k, label: label(k), count: 0, total: 0, tax10: 0, tax8: 0, liters: 0 }; o.count++; o.total += r.total || 0; o.tax10 += r.tax10 || 0; o.tax8 += r.tax8 || 0; o.liters += isFuel(r) ? (r.liters || 0) : 0; m.set(k, o); });
+    const out = [...m.values()]; out.sort((a, b) => A === "month" ? b.key.localeCompare(a.key) : b.total - a.total);
     return { rs, out };
   }
   function summaryView() {
     const { rs, out } = summaryRows(); const max = Math.max(1, ...out.map(o => o.total)); const p = S.period;
-    const sum = rs.reduce((s, r) => s + (r.total || 0), 0);
     return `<section class="sec"><h2>集計</h2>
       <div class="seg" role="group" aria-label="集計の軸">${Object.entries(AXES).map(([k, v]) => `<button type="button" data-axis="${k}" aria-pressed="${S.axis === k}">${v}</button>`).join("")}</div>
       <div class="card filters">
         <div class="f"><label for="per-from">期間（から）</label><input type="month" id="per-from" value="${esc(p.from)}"></div>
         <div class="f"><label for="per-to">期間（まで）</label><input type="month" id="per-to" value="${esc(p.to)}"></div>
       </div>
-      <div class="card"><div class="totalline"><div><div style="font-size:12px;color:var(--muted)">確定済み合計（${rs.length}件）</div><div class="v num">${yen(sum)}</div></div>
-        <div style="font-size:12px;color:var(--muted);text-align:right">消費税10% <span class="num">${yen(rs.reduce((s, r) => s + (r.tax10 || 0), 0))}</span><br>消費税8% <span class="num">${yen(rs.reduce((s, r) => s + (r.tax8 || 0), 0))}</span></div></div></div>
-      <div class="list bars">${out.length ? out.map(o => `<button type="button" class="row" data-drill="${esc(o.key)}" style="width:100%;border-left:0;border-right:0;border-bottom:0;background:none;text-align:left">
-          <div style="min-width:0"><div class="t">${esc(o.label)}</div><div class="m">${o.count}件</div><div class="bar-track"><div class="bar" style="width:${(o.total / max * 100).toFixed(1)}%"></div></div></div>
-          <div class="amt"><span class="num">${yen(o.total)}</span></div></button>`).join("") : `<div class="empty">この期間に確定済みの領収書はない。領収書を確定すると、ここで案件別・顧客別に集計される。</div>`}</div>
+      <div class="card"><div class="totalline"><div><div style="font-size:12px;color:var(--muted)">確定済み合計（${rs.length}件）</div><div class="v num">${yen(sum(rs))}</div></div>
+        <div style="font-size:12px;color:var(--muted);text-align:right">現場原価 <span class="num">${yen(sum(rs.filter(r => r.projectId)))}</span><br>販管費 <span class="num">${yen(sum(rs.filter(r => !r.projectId)))}</span><br>消費税 <span class="num">${yen(rs.reduce((s, r) => s + (r.tax10 || 0) + (r.tax8 || 0), 0))}</span></div></div></div>
+      <div class="list">${out.length ? out.map(o => `<button type="button" class="barbtn" data-drill="${esc(o.key)}">
+          <div style="min-width:0"><div class="t">${esc(o.label)}</div><div style="font-size:12px;color:var(--muted)">${o.count}件${S.axis === "vehicle" && o.liters ? ` · 給油 ${o.liters.toFixed(1)}L` : ""}</div><div class="bar-track"><div class="bar" style="width:${(o.total / max * 100).toFixed(1)}%"></div></div></div>
+          <div class="amt"><span class="num">${yen(o.total)}</span></div></button>`).join("") : `<div class="empty">この期間に確定済みの領収書はない。</div>`}</div>
       <div class="btns"><button class="btn" id="csv-summary">集計をCSVで保存</button></div></section>`;
   }
 
-  // ---- master ----
+  // ----- マスタ -----
   function masterView() {
-    const usage = id => S.receipts.filter(r => r.status !== "void" && (r.customerId === id || r.projectId === id)).length;
-    const unl = S.receipts.filter(r => (r.status === "confirmed" || r.status === "needs_review") && !r.customerId && vendorAsCustomer(r));
-    return `${unl.length ? `<div class="card"><div style="font-size:14px">顧客が未設定の領収書が<b class="num">${unl.length}</b>件ある。取引先名で顧客マスタを照合し、ない取引先は新しい顧客として登録して紐付ける。</div>
-        <div style="font-size:12px;color:var(--muted)">${esc([...new Set(unl.map(vendorAsCustomer))].slice(0, 8).join("、"))}</div>
-        <div class="btns"><button class="btn primary" type="button" id="bulk-cust">取引先を顧客マスタに一括登録</button></div></div>` : ""}
-      <section class="sec"><div class="sec-head"><h2>顧客</h2><span class="sub">${S.customers.length}件</span></div>
-      <form class="card" id="cust-form"><div class="grid2"><div class="f"><label for="c-name">顧客名 *</label><input id="c-name" placeholder="例：株式会社サンプル商事"></div>
-        <div class="f"><label for="c-code">顧客コード</label><input id="c-code" placeholder="例：C001"></div></div>
-        <div class="btns"><button class="btn primary" type="submit">顧客を追加</button></div></form>
-      <div class="list">${S.customers.length ? S.customers.slice().sort((a, b) => (a.code || a.name).localeCompare(b.code || b.name, "ja")).map(c => `<div class="row" style="grid-template-columns:minmax(0,1fr) auto"><div style="min-width:0"><div class="t">${esc(c.name)}${c.source ? `<span class="src">${esc(c.source)}</span>` : ""}</div><div class="m">${esc(c.code || "コードなし")}${c.regNo ? " · " + esc(c.regNo) : ""} · 案件${S.projects.filter(p => p.customerId === c.id).length}件 · 領収書${usage(c.id)}件</div></div><span></span></div>`).join("")
-        : `<div class="empty">顧客がまだない。上のフォームから追加する。デモ用には<button class="linkbtn" style="margin:0" id="seed">サンプルの顧客・案件を入れる</button>。</div>`}</div></section>
-      <section class="sec"><div class="sec-head"><h2>案件</h2><span class="sub">${S.projects.length}件</span></div>
-      <form class="card" id="proj-form"><div class="f"><label for="p-customer">顧客 *</label><select id="p-customer"><option value="">選択する</option>${S.customers.map(c => `<option value="${c.id}">${esc(c.name)}</option>`).join("")}</select></div>
-        <div class="grid2"><div class="f"><label for="p-name">案件名 *</label><input id="p-name" placeholder="例：基幹システム更改"></div><div class="f"><label for="p-code">案件コード</label><input id="p-code" placeholder="例：P2026-001"></div></div>
-        <div class="btns"><button class="btn primary" type="submit">案件を追加</button></div></form>
-      <div class="list">${S.projects.length ? S.projects.slice().sort((a, b) => (a.code || a.name).localeCompare(b.code || b.name, "ja")).map(p => `<div class="row" style="grid-template-columns:minmax(0,1fr) auto"><div style="min-width:0"><div class="t">${esc(p.name)}</div><div class="m">${esc(custName(p.customerId))} · ${esc(p.code || "コードなし")} · 領収書${usage(p.id)}件</div></div>
-          <button type="button" class="pill ${p.status === "closed" ? "void" : "confirmed"}" style="border:0;min-height:32px;padding:4px 10px" data-toggle="${p.id}" aria-label="${esc(p.name)}の状態を切り替える">${p.status === "closed" ? "完了" : "進行中"}</button></div>`).join("")
-        : `<div class="empty">案件がまだない。顧客を選んで追加する。</div>`}</div></section>
-      <section class="sec"><h2>勘定科目</h2><div class="card" style="font-size:13px;color:var(--muted)">${CATEGORIES.join("・")}<br>（デモ版は固定。本実装でマスタ編集に対応する）</div></section>`;
+    const usage = (k, id) => S.receipts.filter(r => r.status !== "void" && r[k] === id).length;
+    const unl = S.receipts.filter(r => (r.status === "confirmed" || r.status === "needs_review") && !r.vendorId && vendorBase(r));
+    const hasSample = ["customers", "projects", "receipts", "vendors", "vehicles"].some(k => S[k].some(x => x.sample));
+    const item = (title, sub, right = "") => `<div class="row" style="grid-template-columns:minmax(0,1fr) auto"><div style="min-width:0"><div class="t">${title}</div><div class="m">${sub}</div></div>${right || "<span></span>"}</div>`;
+    return `
+      <div class="card"><div style="font-weight:700">デモデータ</div>
+        <div style="font-size:13px;color:var(--muted)">建設機材卸を想定した得意先4社・現場5件・車両4台・取引先と、領収書13枚（9〜11月）を入れる。サンプルには「見本」と表示し、まとめて削除できる。</div>
+        <div class="btns">${hasSample ? `<button class="btn danger" type="button" id="unseed">サンプルデータを削除</button>` : `<button class="btn primary" type="button" id="seed">サンプルデータを入れる</button>`}</div></div>
+      <section class="sec"><div class="sec-head"><h2>取引先（支払先）</h2><span class="sub">${S.vendors.length}件 · 領収書の確定時に自動登録</span></div>
+      ${unl.length ? `<div class="card"><div style="font-size:14px">取引先マスタに未登録の領収書が<b class="num">${unl.length}</b>件ある。</div><div style="font-size:12px;color:var(--muted)">${esc([...new Set(unl.map(vendorBase))].slice(0, 8).join("、"))}</div>
+        <div class="btns"><button class="btn primary" type="button" id="bulk-vendor">取引先マスタに一括登録</button></div></div>` : ""}
+      <div class="list">${S.vendors.length ? S.vendors.slice().sort((a, b) => a.name.localeCompare(b.name, "ja")).map(v => item(`${esc(v.name)}${v.source ? `<span class="src">${esc(v.source)}</span>` : ""}`, `${esc(v.type || "業種未設定")} · ${esc(v.regNo || "登録番号なし")} · 領収書${usage("vendorId", v.id)}件`)).join("")
+        : `<div class="empty">取引先はまだない。領収書を確定すると、読み取った取引先がここに登録される。</div>`}</div></section>
+      <section class="sec"><div class="sec-head"><h2>得意先</h2><span class="sub">${S.customers.length}件</span></div>
+      <form class="card" id="cust-form"><div class="grid2"><div class="f"><label for="c-name">得意先名 *</label><input id="c-name" placeholder="例：山王建設株式会社"></div>
+        <div class="f"><label for="c-code">得意先コード</label><input id="c-code" placeholder="例：C001"></div></div>
+        <div class="btns"><button class="btn primary" type="submit">得意先を追加</button></div></form>
+      <div class="list">${S.customers.length ? S.customers.slice().sort((a, b) => (a.code || a.name).localeCompare(b.code || b.name, "ja")).map(c => item(esc(c.name), `${esc(c.code || "コードなし")} · 現場${S.projects.filter(p => p.customerId === c.id).length}件 · 領収書${usage("customerId", c.id)}件`)).join("")
+        : `<div class="empty">得意先がまだない。</div>`}</div></section>
+      <section class="sec"><div class="sec-head"><h2>現場・案件</h2><span class="sub">${S.projects.length}件</span></div>
+      <form class="card" id="proj-form"><div class="f"><label for="p-customer">得意先 *</label><select id="p-customer"><option value="">選択する</option>${S.customers.map(c => `<option value="${c.id}">${esc(c.name)}</option>`).join("")}</select></div>
+        <div class="grid2"><div class="f"><label for="p-name">現場名・案件名 *</label><input id="p-name" placeholder="例：(仮称)港南3丁目マンション新築工事"></div><div class="f"><label for="p-code">工事番号</label><input id="p-code" placeholder="例：K-2611"></div></div>
+        <div class="btns"><button class="btn primary" type="submit">現場を追加</button></div></form>
+      <div class="list">${S.projects.length ? S.projects.slice().sort((a, b) => (a.code || a.name).localeCompare(b.code || b.name, "ja")).map(p => item(esc(projLabel(p.id)), `${esc(custName(p.customerId))} · 領収書${usage("projectId", p.id)}件 · ${yen(sum(S.receipts.filter(r => r.status === "confirmed" && r.projectId === p.id)))}`,
+          `<button type="button" class="pill ${p.status === "closed" ? "void" : "confirmed"}" style="border:0;min-height:32px;padding:4px 10px" data-toggle="${p.id}" aria-label="${esc(p.name)}の状態を切り替える">${p.status === "closed" ? "完了" : "進行中"}</button>`)).join("")
+        : `<div class="empty">現場・案件がまだない。得意先を選んで追加する。</div>`}</div></section>
+      <section class="sec"><div class="sec-head"><h2>車両</h2><span class="sub">${S.vehicles.length}台</span></div>
+      <form class="card" id="veh-form"><div class="grid2"><div class="f"><label for="vh-name">車両名 *</label><input id="vh-name" placeholder="例：2tユニック"></div><div class="f"><label for="vh-plate">ナンバー</label><input id="vh-plate" placeholder="例：品川 400 か 12-34"></div></div>
+        <div class="btns"><button class="btn primary" type="submit">車両を追加</button></div></form>
+      <div class="list">${S.vehicles.length ? S.vehicles.map(v => item(esc(v.name), `${esc(v.plate || "ナンバー未登録")} · 領収書${usage("vehicleId", v.id)}件 · ${yen(sum(S.receipts.filter(r => r.status === "confirmed" && r.vehicleId === v.id)))}`)).join("") : `<div class="empty">車両がまだない。配送トラックや営業車を登録すると、燃料費を車両別に集計できる。</div>`}</div></section>
+      <section class="sec"><h2>勘定科目</h2><div class="card" style="font-size:13px;color:var(--muted)">${CATEGORIES.join("・")}<br>取引先の業種から初期値を推定する（燃料→車両費、高速・駐車場→旅費交通費、配送→荷造運賃、部品・整備→修繕費）。デモ版は固定。</div></section>`;
   }
 
-  // ---------- CSV ----------
+  // ----- サンプルデータ（建設機材卸） -----
+  async function seedSample() {
+    const now = new Date().toISOString(); const W = [];
+    const C = { sanno: newId("c"), hokushin: newId("c"), toho: newId("c"), aoba: newId("c") };
+    W.push(["customers", C.sanno, { name: "山王建設株式会社", code: "C101" }], ["customers", C.hokushin, { name: "株式会社北辰工務店", code: "C102" }],
+           ["customers", C.toho, { name: "東邦土木株式会社", code: "C103" }], ["customers", C.aoba, { name: "青葉リフォーム有限会社", code: "C104" }]);
+    const P = { k: newId("p"), b: newId("p"), h: newId("p"), t: newId("p"), a: newId("p") };
+    W.push(["projects", P.k, { name: "(仮称)港南3丁目マンション新築工事", code: "K-2611", customerId: C.sanno, status: "active" }],
+           ["projects", P.b, { name: "県道48号 若葉橋 橋梁補修工事", code: "B-2604", customerId: C.toho, status: "active" }],
+           ["projects", P.h, { name: "北辰工務店 本社社屋改修工事", code: "H-2608", customerId: C.hokushin, status: "active" }],
+           ["projects", P.t, { name: "臨港道路 舗装更新工事", code: "T-2610", customerId: C.toho, status: "active" }],
+           ["projects", P.a, { name: "青葉台 戸建て外壁改修（足場レンタル）", code: "A-2612", customerId: C.aoba, status: "active" }]);
+    const V = { u2: newId("h"), f4: newId("h"), ev: newId("h"), kv: newId("h") };
+    W.push(["vehicles", V.u2, { name: "2tユニック", plate: "品川 400 か 12-34" }], ["vehicles", V.f4, { name: "4t平ボディ", plate: "品川 100 さ 56-78" }],
+           ["vehicles", V.ev, { name: "営業車（ハイブリッド）", plate: "品川 500 ほ 90-12" }], ["vehicles", V.kv, { name: "軽バン（整備用）", plate: "品川 480 あ 34-56" }]);
+    const VD = {
+      oil: [newId("v"), { name: "みなとオイル", type: "ガソリンスタンド", regNo: "T6010401099981" }],
+      hc: [newId("v"), { name: "ホームセンター ツルギ", type: "ホームセンター・工具店", regNo: "T3020001099982" }],
+      tool: [newId("v"), { name: "工具のヤマト", type: "ホームセンター・工具店", regNo: "T5010801099983" }],
+      hw: [newId("v"), { name: "湾岸ハイウェイ", type: "高速道路・駐車場", regNo: "T8010001099984" }],
+      park: [newId("v"), { name: "パーキング ミナト24", type: "高速道路・駐車場", regNo: "" }],
+      bin: [newId("v"), { name: "ミナト急便", type: "運送・宅配", regNo: "T2020001099985" }],
+      sakae: [newId("v"), { name: "和食 さかえ", type: "飲食店", regNo: "T7020001099986" }],
+      hotori: [newId("v"), { name: "珈琲 ほとり", type: "飲食店", regNo: "" }],
+      yoshino: [newId("v"), { name: "割烹 よしの", type: "飲食店", regNo: "T4020001099987" }],
+      motor: [newId("v"), { name: "ミナトモータース", type: "部品・整備工場", regNo: "T9020001099988" }],
+    };
+    Object.values(VD).forEach(([id, d]) => W.push(["vendors", id, { ...d, source: "見本" }]));
+    const rc = (d, vk, branch, total, tax10, cat, pj, extra = {}) => {
+      const [vid, vd] = VD[vk];
+      return { status: "confirmed", issuedOn: d, vendor: vd.name + (branch ? " " + branch : ""), vendorCompany: vd.name, vendorId: vid, vendorType: vd.type, regNo: vd.regNo,
+        total, tax10, tax8: null, payment: "現金", description: "", category: cat, projectId: pj ? P[pj] : "", customerId: pj ? ({ k: C.sanno, b: C.toho, h: C.hokushin, t: C.toho, a: C.aoba })[pj] : "",
+        vehicleId: "", liters: null, people: null, memo: "", assetId: null, thumb: null, sha256: "", confidence: {}, ocrError: "", createdBy: S.me || "", createdAt: d + "T09:00:00.000Z",
+        confirmedAt: d + "T18:00:00.000Z", voidReason: "", history: [{ at: now, by: "", action: "サンプルデータとして登録" }], ...extra };
+    };
+    const R = [
+      rc("2026-09-04", "oil", "港南SS", 8640, 785, "車両費", "k", { vehicleId: V.u2, liters: 48, description: "軽油 48.0L", payment: "クレジットカード" }),
+      rc("2026-09-11", "hc", "川崎店", 3280, 298, "消耗品費", "k", { description: "養生テープ・結束バンド" }),
+      rc("2026-09-18", "sakae", "", 18700, 1700, "会議費", "k", { people: 4, memo: "山王建設 港南現場 所長ほか2名と工程打合せ（レンタル延長の件）" }),
+      rc("2026-09-25", "tool", "大田店", 12980, 1180, "修繕費", "", { description: "発電機 リコイルスターター部品", vehicleId: "" }),
+      rc("2026-10-02", "hw", "大黒料金所", 1320, 120, "旅費交通費", "b", { vehicleId: V.f4, description: "高速通行料（現金）" }),
+      rc("2026-10-02", "park", "", 800, 72, "旅費交通費", "b", { description: "若葉橋現場 搬入時の駐車" }),
+      rc("2026-10-09", "oil", "港南SS", 11520, 1047, "車両費", "t", { vehicleId: V.f4, liters: 64, description: "軽油 64.0L", payment: "クレジットカード" }),
+      rc("2026-10-15", "hotori", "", 2860, 260, "会議費", "h", { people: 3, memo: "北辰工務店 現場担当と足場計画の打合せ" }),
+      rc("2026-10-21", "bin", "", 4400, 400, "荷造運賃", "h", { description: "クランプ・ジョイント 緊急配送" }),
+      rc("2026-10-28", "yoshino", "", 52800, 4800, "交際費", "t", { people: 4, memo: "東邦土木 工事部長ほか2名 受注御礼" }),
+      rc("2026-11-01", "oil", "港南SS", 6210, 564, "車両費", "", { liters: 36, description: "レギュラー 36.0L", payment: "クレジットカード" }),
+      rc("2026-11-02", "hc", "川崎店", 1958, 178, "消耗品費", "a", { description: "単管クランプ用ボルト" }),
+      { ...rc("2026-11-02", "motor", "", 33000, 3000, "修繕費", "", { vehicleId: V.u2, description: "2tユニック クレーン油圧ホース交換", payment: "その他" }), status: "needs_review", confirmedAt: "" },
+    ];
+    R.forEach(d => W.push(["receipts", newId("r"), d]));
+    for (const [col, id, d] of W) await S.db.collection(col).doc(id).set({ createdAt: now, ...d, sample: true });
+  }
+  async function unseedSample() {
+    for (const col of ["receipts", "projects", "customers", "vendors", "vehicles"]) for (const x of S[col].filter(x => x.sample)) await S.db.doc(col + "/" + x.id).delete();
+  }
+  async function runBusy(btn, label, fn, done) {
+    S.busy = true; if (btn) { btn.disabled = true; btn.textContent = label; }
+    try { await fn(); toast(done); } catch (e) { toast("処理が途中で止まった（" + (e.code || e.message || "error") + "）"); }
+    S.busy = false; document.activeElement?.blur(); render();
+  }
+
+  // ----- CSV -----
   async function saveCsv(name, rows) {
     const body = "﻿" + rows.map(r => r.map(v => { const s = String(v ?? ""); return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; }).join(",")).join("\r\n");
     if (!S.downloads) { toast("この表示ではファイル保存が使えない"); return; }
@@ -571,20 +729,29 @@ h2 { font-size: 15px; margin: 0; font-weight: 700; text-wrap: balance; }
     catch (e) { if (e?.code !== "declined" && e?.code !== "cancelled") toast("CSVを保存できなかった"); }
   }
 
-  // ---------- events ----------
+  // ===== イベント =====
   function bind(v) {
+    if (v.name === "home") {
+      document.querySelectorAll("[data-goaxis]").forEach(b => b.addEventListener("click", () => { S.axis = b.dataset.goaxis; ls.set("rl.axis", S.axis); if (S.axis === "month") { S.period = { from: "", to: "" }; ls.set("rl.period", S.period); } location.hash = "summary"; }));
+      document.querySelectorAll("[data-issue]").forEach(b => b.addEventListener("click", () => { S.filters = { issue: b.dataset.issue }; ls.set("rl.filters", S.filters); location.hash = "list"; }));
+      $("#seed-home")?.addEventListener("click", e => runBusy(e.currentTarget, "投入中…", seedSample, "サンプルデータを入れた"));
+    }
     if (v.name === "receipt") {
+      const r = S.receipts.find(x => x.id === v.id);
       $("#back")?.addEventListener("click", () => { if (history.length > 1) history.back(); else location.hash = "home"; });
       const ph = $("#photo"); ph?.addEventListener("click", () => { S.zoom = !S.zoom; ph.classList.toggle("zoom", S.zoom); });
-      const form = $("#rform"); if (!form) return;
-      form.addEventListener("submit", e => { e.preventDefault(); const r = S.receipts.find(x => x.id === v.id); saveReceipt(v.id, r?.status === "confirmed" ? "confirm" : "next"); });
+      const form = $("#rform"); if (!form || !r) return;
+      syncForm(r);
+      form.addEventListener("input", () => syncForm(r)); form.addEventListener("change", () => syncForm(r));
+      form.addEventListener("submit", e => { e.preventDefault(); saveReceipt(v.id, r.status === "confirmed" ? "confirm" : "next"); });
+      $("#f-vendorType")?.addEventListener("change", e => { const c = $("#f-category"); const def = VENDOR_TYPES[e.target.value]; if (def && !c.value) c.value = def; syncForm(r); });
       $("#f-customerId")?.addEventListener("change", e => {
-        const nb = $("#newcust"); if (nb) { const show = !e.target.value && !!nb.dataset.cand; nb.hidden = !show; $("#f-autoCust").checked = show; }
-        const ps = S.projects.filter(p => !e.target.value || p.customerId === e.target.value);
         const sel = $("#f-projectId"); const cur = sel.value;
-        sel.innerHTML = `<option value="">（案件なし）</option>` + ps.filter(p => p.status !== "closed").map(p => `<option value="${p.id}" ${p.id === cur ? "selected" : ""}>${esc(p.name)}</option>`).join("");
+        const ps = S.projects.filter(p => (!e.target.value || p.customerId === e.target.value) && p.status !== "closed");
+        sel.innerHTML = `<option value="">（なし：販管費）</option>` + ps.map(p => `<option value="${p.id}" ${p.id === cur ? "selected" : ""}>${esc(projLabel(p.id))}</option>`).join("");
+        syncForm(r);
       });
-      $("#f-projectId")?.addEventListener("change", e => { const p = proj(e.target.value); if (p) { $("#f-customerId").value = p.customerId; const nb = $("#newcust"); if (nb) { nb.hidden = true; $("#f-autoCust").checked = false; } } });
+      $("#f-projectId")?.addEventListener("change", e => { const p = proj(e.target.value); if (p) $("#f-customerId").value = p.customerId; syncForm(r); });
       form.querySelectorAll("[data-act]").forEach(b => b.addEventListener("click", async e => {
         const a = b.dataset.act;
         if (a === "next" || a === "confirm" || a === "draft") { e.preventDefault(); saveReceipt(v.id, a); }
@@ -592,14 +759,10 @@ h2 { font-size: 15px; margin: 0; font-weight: 700; text-wrap: balance; }
         if (a === "void-cancel") { S.voiding = false; document.activeElement?.blur(); render(); }
         if (a === "void-do") {
           const reason = $("#f-voidReason").value.trim(); if (!reason) { $("#f-voidReason").closest(".f").classList.add("err"); return; }
-          const r = S.receipts.find(x => x.id === v.id);
           try { await S.db.doc("receipts/" + v.id).update({ status: "void", voidReason: reason, history: [...(r.history || []), { at: new Date().toISOString(), by: S.me || "", action: "取消", diff: reason }] });
             S.voiding = false; toast("取り消した"); document.activeElement?.blur(); render(); } catch (err) { toast("取り消せなかった（" + (err.code || "error") + "）"); }
         }
       }));
-    }
-    if (v.name === "home") {
-      document.querySelectorAll("[data-goaxis]").forEach(b => b.addEventListener("click", () => { S.axis = b.dataset.goaxis; ls.set("rl.axis", S.axis); if (S.axis === "month") { S.period = { from: "", to: "" }; ls.set("rl.period", S.period); } location.hash = "summary"; }));
     }
     if (v.name === "list") {
       document.querySelectorAll("[id^='flt-']").forEach(el => el.addEventListener(el.tagName === "SELECT" ? "change" : "input", () => {
@@ -609,8 +772,9 @@ h2 { font-size: 15px; margin: 0; font-weight: 700; text-wrap: balance; }
       }));
       $("#clear-flt").addEventListener("click", () => { S.filters = {}; ls.set("rl.filters", {}); render(); });
       $("#csv-detail").addEventListener("click", () => saveCsv(`領収書明細_${today()}.csv`, [
-        ["取引日", "取引先", "登録番号", "税込金額", "消費税10%", "消費税8%", "支払方法", "勘定科目", "顧客コード", "顧客名", "案件コード", "案件名", "但し書き", "メモ", "ステータス", "確定日時", "領収書ID"],
-        ...filtered().map(r => [r.issuedOn, r.vendor, r.regNo, r.total, r.tax10, r.tax8, r.payment, r.category, cust(r.customerId)?.code, custName(r.customerId), proj(r.projectId)?.code, projName(r.projectId), r.description, r.memo, STATUS_LABEL[r.status], r.confirmedAt, r.id])]));
+        ["取引日", "取引先", "取引先業種", "登録番号", "税込金額", "消費税10%", "消費税8%", "支払方法", "勘定科目", "区分", "得意先コード", "得意先名", "工事番号", "現場名", "車両", "給油量L", "人数", "但し書き", "メモ", "ステータス", "確定日時", "領収書ID"],
+        ...filtered().map(r => [r.issuedOn, r.vendor, r.vendorType, r.regNo, r.total, r.tax10, r.tax8, r.payment, r.category, costType(r), cust(r.customerId)?.code, custName(r.customerId), proj(r.projectId)?.code, projName(r.projectId),
+          veh(r.vehicleId)?.name, r.liters, r.people, r.description, r.memo, STATUS_LABEL[r.status], r.confirmedAt, r.id])]));
     }
     if (v.name === "summary") {
       document.querySelectorAll("[data-axis]").forEach(b => b.addEventListener("click", () => { S.axis = b.dataset.axis; ls.set("rl.axis", S.axis); render(); }));
@@ -618,49 +782,40 @@ h2 { font-size: 15px; margin: 0; font-weight: 700; text-wrap: balance; }
       document.querySelectorAll("[data-drill]").forEach(b => b.addEventListener("click", () => {
         const k = b.dataset.drill; const p = S.period; const f = { status: "confirmed" };
         if (p.from) f.from = p.from + "-01"; if (p.to) f.to = p.to + "-31";
-        if (S.axis === "project") { if (k) { f.projectId = k; f.customerId = proj(k)?.customerId || ""; } }
-        else if (S.axis === "customer") { if (k) f.customerId = k; }
-        else if (S.axis === "month" && k) { f.from = k + "-01"; f.to = k + "-31"; }
-        else if (S.axis === "category") { f.q = ""; }
+        const A = S.axis;
+        if (A === "project") { if (k) { f.projectId = k; f.customerId = proj(k)?.customerId || ""; } else f.cost = "販管費"; }
+        else if (A === "customer") { if (k) f.customerId = k; else f.cost = "販管費"; }
+        else if (A === "month" && k) { f.from = k + "-01"; f.to = k + "-31"; }
+        else if (A === "category" && k) f.category = k;
+        else if (A === "cost") f.cost = k;
+        else if (A === "vehicle" && k) f.vehicleId = k;
+        else if (A === "vendor") f.q = k.startsWith("n:") ? k.slice(2) : (S.vendors.find(x => x.id === k)?.name || "");
         S.filters = f; ls.set("rl.filters", f); location.hash = "list";
       }));
       $("#csv-summary").addEventListener("click", () => { const { out } = summaryRows();
         saveCsv(`領収書集計_${AXES[S.axis]}_${today()}.csv`, [[AXES[S.axis].replace("別", ""), "件数", "税込合計", "消費税10%", "消費税8%"], ...out.map(o => [o.label, o.count, o.total, o.tax10, o.tax8])]); });
     }
     if (v.name === "master") {
-      $("#cust-form").addEventListener("submit", async e => { e.preventDefault(); const name = $("#c-name").value.trim(); if (!name) { $("#c-name").closest(".f").classList.add("err"); return; }
-        try { await S.db.collection("customers").doc(newId("c")).set({ name, code: $("#c-code").value.trim(), createdAt: new Date().toISOString() }); document.activeElement?.blur(); toast("顧客を追加した"); render(); } catch (err) { toast("追加できなかった（" + (err.code || "error") + "）"); } });
-      $("#proj-form").addEventListener("submit", async e => { e.preventDefault(); const name = $("#p-name").value.trim(), customerId = $("#p-customer").value;
-        if (!name || !customerId) { if (!name) $("#p-name").closest(".f").classList.add("err"); if (!customerId) $("#p-customer").closest(".f").classList.add("err"); return; }
-        try { await S.db.collection("projects").doc(newId("p")).set({ name, customerId, code: $("#p-code").value.trim(), status: "active", createdAt: new Date().toISOString() }); document.activeElement?.blur(); toast("案件を追加した"); render(); } catch (err) { toast("追加できなかった（" + (err.code || "error") + "）"); } });
+      const addForm = (formId, fields, col, build, done) => $(formId).addEventListener("submit", async e => {
+        e.preventDefault(); const vals = fields.map(f => $(f).value.trim());
+        const req = fields.filter((f, i) => f.endsWith("-name") || f === "#p-customer").filter(f => !$(f).value.trim());
+        if (req.length) { req.forEach(f => $(f).closest(".f").classList.add("err")); return; }
+        try { await S.db.collection(col).doc(newId(col[0])).set({ ...build(vals), createdAt: new Date().toISOString() }); document.activeElement?.blur(); toast(done); render(); } catch (err) { toast("追加できなかった（" + (err.code || "error") + "）"); }
+      });
+      addForm("#cust-form", ["#c-name", "#c-code"], "customers", ([name, code]) => ({ name, code }), "得意先を追加した");
+      addForm("#proj-form", ["#p-customer", "#p-name", "#p-code"], "projects", ([customerId, name, code]) => ({ customerId, name, code, status: "active" }), "現場を追加した");
+      addForm("#veh-form", ["#vh-name", "#vh-plate"], "vehicles", ([name, plate]) => ({ name, plate }), "車両を追加した");
       document.querySelectorAll("[data-toggle]").forEach(b => b.addEventListener("click", async () => { const p = proj(b.dataset.toggle); try { await S.db.doc("projects/" + p.id).update({ status: p.status === "closed" ? "active" : "closed" }); } catch (err) { toast("変更できなかった（" + (err.code || "error") + "）"); } }));
-      $("#bulk-cust")?.addEventListener("click", async e => {
-        const btn = e.currentTarget; btn.disabled = true; btn.textContent = "登録中…";
-        const targets = S.receipts.filter(r => (r.status === "confirmed" || r.status === "needs_review") && !r.customerId && vendorAsCustomer(r));
-        let created = 0, linked = 0;
-        try {
-          for (const r of targets) {
-            const nm = vendorAsCustomer(r); const ex = matchCustomer(nm, r.regNo);
-            const cid = ex ? ex.id : await createCustomer(nm, r.regNo); if (!ex) created++;
-            const cur = (await S.db.doc("receipts/" + r.id).get()).data() || r;
-            await S.db.doc("receipts/" + r.id).update({ customerId: cid, history: [...(cur.history || []), { at: new Date().toISOString(), by: S.me || "", action: "顧客を紐付け", diff: "顧客 —→" + (ex ? ex.name : nm) }] });
-            linked++;
-          }
-          toast(`顧客を${created}件登録し、領収書${linked}件に紐付けた`);
-        } catch (err) { toast("一括登録が途中で止まった（" + (err.code || "error") + "）"); }
-        document.activeElement?.blur(); render();
-      });
-      $("#seed")?.addEventListener("click", async () => {
-        const c1 = newId("c"), c2 = newId("c");
-        try {
-          await S.db.collection("customers").doc(c1).set({ name: "（サンプル）株式会社みなと物流", code: "C001", createdAt: new Date().toISOString() });
-          await S.db.collection("customers").doc(c2).set({ name: "（サンプル）北斗製薬株式会社", code: "C002", createdAt: new Date().toISOString() });
-          await S.db.collection("projects").doc(newId("p")).set({ name: "倉庫管理システム導入", customerId: c1, code: "P2026-001", status: "active", createdAt: new Date().toISOString() });
-          await S.db.collection("projects").doc(newId("p")).set({ name: "配送ルート最適化PoC", customerId: c1, code: "P2026-002", status: "active", createdAt: new Date().toISOString() });
-          await S.db.collection("projects").doc(newId("p")).set({ name: "治験データ基盤構築", customerId: c2, code: "P2026-003", status: "active", createdAt: new Date().toISOString() });
-          toast("サンプルの顧客・案件を入れた");
-        } catch (err) { toast("投入できなかった（" + (err.code || "error") + "）"); }
-      });
+      $("#seed")?.addEventListener("click", e => runBusy(e.currentTarget, "投入中…", seedSample, "サンプルデータを入れた"));
+      $("#unseed")?.addEventListener("click", e => runBusy(e.currentTarget, "削除中…", unseedSample, "サンプルデータを削除した"));
+      $("#bulk-vendor")?.addEventListener("click", e => runBusy(e.currentTarget, "登録中…", async () => {
+        for (const r of S.receipts.filter(r => (r.status === "confirmed" || r.status === "needs_review") && !r.vendorId && vendorBase(r))) {
+          const nm = vendorBase(r); const ex = matchVendor(nm, r.regNo);
+          const vid = ex ? ex.id : await createVendor(nm, r.regNo, r.vendorType);
+          const cur = (await S.db.doc("receipts/" + r.id).get()).data() || r;
+          await S.db.doc("receipts/" + r.id).update({ vendorId: vid, history: [...(cur.history || []), { at: new Date().toISOString(), by: S.me || "", action: "取引先を紐付け", diff: ex ? ex.name : nm }] });
+        }
+      }, "取引先マスタに登録した"));
     }
   }
 
